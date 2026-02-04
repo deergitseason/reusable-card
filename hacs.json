@@ -1,0 +1,7 @@
+{
+  "name": "Reusable Cards",
+  "content_in_root": false,
+  "filename": "reusable-card-parent.js",
+  "render_readme": true,
+  "homeassistant": "2023.1.0"
+}

@@ -1,0 +1,10 @@
+{
+  "domain": "card_templates",
+  "name": "Card Templates",
+  "documentation": "https://github.com/yourusername/ha-reusable-cards",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [],
+  "iot_class": "local_push",
+  "version": "1.0.0"
+}

@@ -1,0 +1,30 @@
+save_card:
+  name: Save Card
+  description: Save a reusable card configuration with the given hash
+  fields:
+    hash:
+      name: Card Hash
+      description: Unique identifier for the card (e.g., #camera)
+      required: true
+      example: "#camera"
+      selector:
+        text:
+    config:
+      name: Card Configuration
+      description: The complete card configuration object
+      required: true
+      example: '{"type": "entities", "entities": ["light.living_room"]}'
+      selector:
+        object:
+
+delete_card:
+  name: Delete Card
+  description: Delete a reusable card by hash
+  fields:
+    hash:
+      name: Card Hash
+      description: Unique identifier for the card to delete
+      required: true
+      example: "#camera"
+      selector:
+        text:
