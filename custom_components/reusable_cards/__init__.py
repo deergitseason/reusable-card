@@ -63,8 +63,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.services.async_register(DOMAIN, "delete_card", handle_delete_card)
     
     # Create sensor platform
+    from homeassistant.helpers import discovery
+
     hass.async_create_task(
-        hass.helpers.discovery.async_load_platform("sensor", DOMAIN, {}, config)
+        discovery.async_load_platform(hass, "sensor", DOMAIN, {}, config)
     )
     
     return True
