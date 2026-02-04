@@ -30,7 +30,7 @@ class ReusableCardChild extends HTMLElement {
     if (!this._hass || !this._config.hash) return;
 
     // Get card config from sensor
-    const sensor = this._hass.states['sensor.card_templates'];
+    const sensor = this._hass.states['sensor.reusable_cards'];
     if (!sensor || !sensor.attributes || !sensor.attributes.cards) {
       this.showError('Card Templates integration not found. Make sure it is installed and Home Assistant has been restarted.');
       return;

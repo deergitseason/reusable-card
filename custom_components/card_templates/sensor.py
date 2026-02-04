@@ -5,7 +5,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-DOMAIN = "card_templates"
+DOMAIN = "reusable_cards"
 
 _LOGGER = logging.getLogger(__name__)
 

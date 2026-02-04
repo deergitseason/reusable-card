@@ -4,7 +4,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import storage
 
-DOMAIN = "card_templates"
+DOMAIN = "reusable_cards"
 STORAGE_KEY = f"{DOMAIN}.cards"
 STORAGE_VERSION = 1
 

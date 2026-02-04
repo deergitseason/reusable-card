@@ -1,7 +1,7 @@
 {
-  "domain": "card_templates",
-  "name": "Card Templates",
-  "documentation": "https://github.com/yourusername/ha-reusable-cards",
+  "domain": "reusable_cards",
+  "name": "Reusable Cards",
+  "documentation": "https://github.com/deergitseason/reusable-cards",
   "requirements": [],
   "dependencies": [],
   "codeowners": [],

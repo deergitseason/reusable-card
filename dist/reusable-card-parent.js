@@ -41,7 +41,7 @@ class ReusableCardParent extends HTMLElement {
     }
 
     try {
-      await this._hass.callService('card_templates', 'save_card', {
+      await this._hass.callService('reusable_cards', 'save_card', {
         hash: this._config.hash,
         config: this._config.card
       });
