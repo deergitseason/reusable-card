@@ -149,7 +149,10 @@ class ReusableCardParentEditor extends HTMLElement {
   }
 
   setConfig(config) {
-    this._config = config;
+    this._config = {
+      hash: config.hash || '#my-card',
+      card: config.card || { type: 'entities', entities: [] }
+    };
     this.render();
   }
 
@@ -235,10 +238,7 @@ class ReusableCardParentEditor extends HTMLElement {
     const hashInput = this.shadowRoot.getElementById('hash');
     if (hashInput) {
       hashInput.addEventListener('change', (e) => {
-        this._config = {
-          ...this._config,
-          hash: e.target.value
-        };
+        this._config.hash = e.target.value;
         this.configChanged(this._config);
       });
     }
@@ -251,7 +251,6 @@ class ReusableCardParentEditor extends HTMLElement {
     const cardConfig = this._config.card || { type: 'entities', entities: [] };
     
     // Create a proper card config editor element
-    // This creates the same UI you get when editing any card in the dashboard
     const GUIEditor = customElements.get('hui-card-element-editor');
     
     if (GUIEditor) {
@@ -261,10 +260,9 @@ class ReusableCardParentEditor extends HTMLElement {
       
       editor.addEventListener('value-changed', (ev) => {
         ev.stopPropagation();
-        this._config = {
-          ...this._config,
-          card: ev.detail.value
-        };
+        // Update the nested card config, NOT the parent config
+        this._config.card = ev.detail.value;
+        // Emit the full parent config (with hash + card)
         this.configChanged(this._config);
       });
       

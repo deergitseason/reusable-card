@@ -1,4 +1,4 @@
-"""Sensor platform for Reusable Card Templates."""
+"""Sensor platform for Reusable Cards."""
 import logging
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import HomeAssistant, callback
@@ -16,17 +16,17 @@ async def async_setup_platform(
     async_add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType = None,
 ) -> None:
-    """Set up the Reusable Card Templates sensor."""
-    async_add_entities([CardTemplatesSensor(hass)], True)
+    """Set up the Reusable Cards sensor."""
+    async_add_entities([ReusableCardsSensor(hass)], True)
 
 
-class CardTemplatesSensor(SensorEntity):
+class ReusableCardsSensor(SensorEntity):
     """Sensor that exposes card templates as attributes."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the sensor."""
         self.hass = hass
-        self._attr_name = "Card Templates"
+        self._attr_name = "Reusable Cards"
         self._attr_unique_id = f"{DOMAIN}_sensor"
         self._attr_icon = "mdi:card-multiple"
         
