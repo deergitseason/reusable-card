@@ -32,7 +32,7 @@ class ReusableCardChild extends HTMLElement {
     // Get card config from sensor
     const sensor = this._hass.states['sensor.reusable_cards'];
     if (!sensor || !sensor.attributes || !sensor.attributes.cards) {
-      this.showError('Card Templates integration not found. Make sure it is installed and Home Assistant has been restarted.');
+      this.showError('Reusable Cards integration not found. Make sure it is installed and Home Assistant has been restarted.');
       return;
     }
 
@@ -158,7 +158,7 @@ class ReusableCardChildEditor extends HTMLElement {
     if (!this._hass) return;
 
     // Get available card hashes
-    const sensor = this._hass.states['sensor.card_templates'];
+    const sensor = this._hass.states['sensor.reusable_cards'];
     const cards = sensor?.attributes?.cards || {};
     const hashes = Object.keys(cards);
 
