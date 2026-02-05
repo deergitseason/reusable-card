@@ -1,5 +1,6 @@
 """Sensor platform for Reusable Cards."""
 import logging
+import time
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -30,12 +31,18 @@ class ReusableCardsSensor(SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_sensor"
         self._attr_icon = "mdi:card-multiple"
         self._unsub = None
+        self._update_counter = 0
         
     @property
     def state(self):
-        """Return the state of the sensor."""
+        """Return the state of the sensor.
+        
+        Include update counter to force state change on every update,
+        ensuring frontend receives attribute changes.
+        """
         cards = self.hass.data.get(DOMAIN, {}).get("cards", {})
-        return len(cards)
+        # Format: "count.version" - this ensures state changes even when count doesn't
+        return f"{len(cards)}.{self._update_counter}"
     
     @property
     def extra_state_attributes(self):
@@ -43,7 +50,8 @@ class ReusableCardsSensor(SensorEntity):
         cards = self.hass.data.get(DOMAIN, {}).get("cards", {})
         return {
             "cards": cards,
-            "hashes": list(cards.keys())
+            "hashes": list(cards.keys()),
+            "last_updated": time.time(),
         }
     
     async def async_added_to_hass(self) -> None:
@@ -52,6 +60,7 @@ class ReusableCardsSensor(SensorEntity):
         def card_updated(event):
             """Handle card updated event."""
             _LOGGER.debug(f"Card updated event received: {event.data}")
+            self._update_counter += 1
             self.async_write_ha_state()
         
         self._unsub = self.hass.bus.async_listen(f"{DOMAIN}_updated", card_updated)
