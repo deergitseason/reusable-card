@@ -194,6 +194,7 @@ class ReusableCardParent extends HTMLElement {
 
   static getStubConfig() {
     return {
+      type: 'custom:reusable-card-parent',
       hash: '#my-card',
       card: {
         type: 'entities',
@@ -209,24 +210,34 @@ class ReusableCardParentEditor extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._hass = null;
+    this._cardEditorEl = null;
+    this._cardGUIMode = true;
+    this._cardGUIModeAvailable = true;
   }
 
   setConfig(config) {
     this._config = {
+      type: config.type || 'custom:reusable-card-parent',
       hash: config.hash || '#my-card',
-      card: config.card || { type: 'entities', entities: ['sun.sun'] }
+      card: config.card || null
     };
     this.render();
   }
 
   set hass(hass) {
     this._hass = hass;
+    if (this._cardEditorEl) {
+      this._cardEditorEl.hass = hass;
+    }
     if (!this.shadowRoot.hasChildNodes()) {
       this.render();
     }
   }
 
   configChanged(newConfig) {
+    // Always ensure type is present
+    newConfig.type = 'custom:reusable-card-parent';
+    
     const event = new Event('config-changed', {
       bubbles: true,
       composed: true,
@@ -235,117 +246,52 @@ class ReusableCardParentEditor extends HTMLElement {
     this.dispatchEvent(event);
   }
 
-  // Simple YAML-like stringify (basic formatting)
-  toYamlish(obj, indent = 0) {
-    const spaces = '  '.repeat(indent);
-    let result = '';
-    
-    for (const [key, value] of Object.entries(obj)) {
-      if (Array.isArray(value)) {
-        result += `${spaces}${key}:\n`;
-        for (const item of value) {
-          if (typeof item === 'object') {
-            result += `${spaces}  - ${this.toYamlish(item, indent + 2).trim()}\n`;
-          } else {
-            result += `${spaces}  - ${item}\n`;
-          }
-        }
-      } else if (typeof value === 'object' && value !== null) {
-        result += `${spaces}${key}:\n${this.toYamlish(value, indent + 1)}`;
-      } else {
-        result += `${spaces}${key}: ${value}\n`;
-      }
+  _toggleMode() {
+    if (this._cardEditorEl && this._cardEditorEl.toggleMode) {
+      this._cardEditorEl.toggleMode();
     }
-    return result;
   }
 
-  // Simple YAML-like parser
-  parseYamlish(text) {
-    try {
-      // Use a simple approach: convert to JSON-ish and parse
-      // This handles basic YAML-like syntax
-      const lines = text.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
-      const result = {};
-      let currentObj = result;
-      const stack = [{ obj: result, indent: -1 }];
-      let currentArray = null;
-      let currentArrayKey = null;
-      
-      for (const line of lines) {
-        const indent = line.search(/\S/);
-        const trimmed = line.trim();
-        
-        // Pop stack to find parent at correct indent level
-        while (stack.length > 1 && stack[stack.length - 1].indent >= indent) {
-          stack.pop();
-        }
-        currentObj = stack[stack.length - 1].obj;
-        
-        if (trimmed.startsWith('- ')) {
-          // Array item
-          const value = trimmed.slice(2).trim();
-          if (currentArrayKey && Array.isArray(currentObj[currentArrayKey])) {
-            if (value.includes(':')) {
-              // Object in array
-              const [k, v] = value.split(':').map(s => s.trim());
-              currentObj[currentArrayKey].push({ [k]: this.parseValue(v) });
-            } else {
-              currentObj[currentArrayKey].push(this.parseValue(value));
-            }
-          }
-        } else if (trimmed.includes(':')) {
-          const colonIndex = trimmed.indexOf(':');
-          const key = trimmed.slice(0, colonIndex).trim();
-          const value = trimmed.slice(colonIndex + 1).trim();
-          
-          if (value === '') {
-            // Could be object or array - check next line
-            currentObj[key] = {};
-            stack.push({ obj: currentObj[key], indent: indent });
-            currentArrayKey = key;
-          } else if (value === '[]') {
-            currentObj[key] = [];
-            currentArrayKey = key;
-          } else {
-            currentObj[key] = this.parseValue(value);
-          }
-          
-          // Check if this starts an array
-          if (value === '' || value === '[]') {
-            currentObj[key] = [];
-            currentArrayKey = key;
-          }
-        }
-      }
-      
-      return result;
-    } catch (e) {
-      console.error('YAML parse error:', e);
-      return null;
-    }
+  _cardConfigChanged(ev) {
+    ev.stopPropagation();
+    const cardConfig = ev.detail.config;
+    this._config = { 
+      type: 'custom:reusable-card-parent',
+      hash: this._config.hash,
+      card: cardConfig 
+    };
+    this._cardGUIModeAvailable = ev.detail.guiModeAvailable !== false;
+    this.configChanged(this._config);
   }
-  
-  parseValue(val) {
-    if (val === 'true') return true;
-    if (val === 'false') return false;
-    if (val === 'null') return null;
-    if (/^-?\d+$/.test(val)) return parseInt(val, 10);
-    if (/^-?\d+\.\d+$/.test(val)) return parseFloat(val);
-    // Remove quotes if present
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      return val.slice(1, -1);
-    }
-    return val;
+
+  _cardGUIModeChanged(ev) {
+    ev.stopPropagation();
+    this._cardGUIMode = ev.detail.guiMode;
+    this._cardGUIModeAvailable = ev.detail.guiModeAvailable;
+    this.requestUpdate();
+  }
+
+  requestUpdate() {
+    this.render();
   }
 
   render() {
+    if (!this._hass) return;
+
     const hashValue = this._config.hash || '#my-card';
-    const cardYaml = this.toYamlish(this._config.card || { type: 'entities', entities: ['sun.sun'] });
+    const hasCard = this._config.card && this._config.card.type;
 
     this.shadowRoot.innerHTML = `
       <style>
         .editor {
           padding: 16px;
+        }
+        .info {
+          padding: 12px;
+          background: var(--secondary-background-color);
+          border-radius: 4px;
+          margin-bottom: 16px;
+          font-size: 0.9em;
         }
         .form-group {
           margin-bottom: 16px;
@@ -365,21 +311,7 @@ class ReusableCardParentEditor extends HTMLElement {
           box-sizing: border-box;
           font-size: 14px;
         }
-        .form-group textarea {
-          width: 100%;
-          min-height: 150px;
-          padding: 10px;
-          border: 1px solid var(--divider-color);
-          border-radius: 4px;
-          background: var(--primary-background-color);
-          color: var(--primary-text-color);
-          box-sizing: border-box;
-          font-family: monospace;
-          font-size: 13px;
-          resize: vertical;
-        }
-        .form-group input:focus,
-        .form-group textarea:focus {
+        .form-group input:focus {
           outline: none;
           border-color: var(--primary-color);
         }
@@ -389,17 +321,44 @@ class ReusableCardParentEditor extends HTMLElement {
           color: var(--secondary-text-color);
           font-size: 12px;
         }
-        .info {
-          padding: 12px;
-          background: var(--secondary-background-color);
+        .card-editor-container {
+          margin-top: 16px;
+          border: 1px solid var(--divider-color);
           border-radius: 4px;
-          margin-bottom: 16px;
-          font-size: 0.9em;
+          padding: 16px;
+          background: var(--card-background-color);
         }
-        .error {
-          color: var(--error-color);
+        .card-editor-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .card-editor-header h3 {
+          margin: 0;
+          font-size: 1em;
+          font-weight: bold;
+        }
+        .button-group {
+          display: flex;
+          gap: 8px;
+        }
+        .mode-toggle, .change-card {
+          padding: 4px 12px;
+          border: 1px solid var(--primary-color);
+          border-radius: 4px;
+          background: transparent;
+          color: var(--primary-color);
+          cursor: pointer;
           font-size: 12px;
-          margin-top: 4px;
+        }
+        .mode-toggle:hover, .change-card:hover {
+          background: var(--primary-color);
+          color: var(--text-primary-color);
+        }
+        .mode-toggle:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
       </style>
       <div class="editor">
@@ -418,25 +377,68 @@ class ReusableCardParentEditor extends HTMLElement {
           />
           <small>Unique identifier (e.g., #camera, #lights, #weather)</small>
         </div>
-        
-        <div class="form-group">
-          <label for="card-yaml">Card Configuration (YAML)</label>
-          <textarea id="card-yaml" placeholder="type: entities
-entities:
-  - sun.sun">${cardYaml}</textarea>
-          <small>Define the card that will be displayed and reused</small>
-          <div id="yaml-error" class="error" style="display: none;"></div>
+
+        <div class="card-editor-container">
+          <div class="card-editor-header">
+            <h3>Card Configuration</h3>
+            ${hasCard ? `
+              <div class="button-group">
+                <button 
+                  class="mode-toggle" 
+                  id="toggle-mode"
+                  ${!this._cardGUIModeAvailable ? 'disabled' : ''}
+                >
+                  ${this._cardGUIMode ? 'Show Code Editor' : 'Show Visual Editor'}
+                </button>
+                <button class="change-card" id="change-card">
+                  Change Card
+                </button>
+              </div>
+            ` : ''}
+          </div>
+          <div id="card-editor-placeholder"></div>
         </div>
       </div>
     `;
 
     this.attachEventListeners();
+    this.renderCardEditor();
+  }
+
+  async renderCardEditor() {
+    const placeholder = this.shadowRoot.getElementById('card-editor-placeholder');
+    if (!placeholder || !this._hass) return;
+
+    // Clear existing editor
+    placeholder.innerHTML = '';
+
+    if (this._config.card && this._config.card.type) {
+      // Create card element editor for existing card
+      const cardEditor = document.createElement('hui-card-element-editor');
+      cardEditor.hass = this._hass;
+      cardEditor.value = this._config.card;
+      
+      cardEditor.addEventListener('config-changed', this._cardConfigChanged.bind(this));
+      cardEditor.addEventListener('GUImode-changed', this._cardGUIModeChanged.bind(this));
+      
+      placeholder.appendChild(cardEditor);
+      this._cardEditorEl = cardEditor;
+    } else {
+      // Create card picker for new card
+      const cardPicker = document.createElement('hui-card-picker');
+      cardPicker.hass = this._hass;
+      
+      cardPicker.addEventListener('config-changed', this._cardConfigChanged.bind(this));
+      
+      placeholder.appendChild(cardPicker);
+      this._cardEditorEl = null;
+    }
   }
 
   attachEventListeners() {
     const hashInput = this.shadowRoot.getElementById('hash');
-    const cardYamlTextarea = this.shadowRoot.getElementById('card-yaml');
-    const yamlError = this.shadowRoot.getElementById('yaml-error');
+    const toggleButton = this.shadowRoot.getElementById('toggle-mode');
+    const changeCardButton = this.shadowRoot.getElementById('change-card');
 
     if (hashInput) {
       hashInput.addEventListener('change', (e) => {
@@ -447,40 +449,31 @@ entities:
           e.target.value = hash;
         }
         if (this._config.hash !== hash) {
-          this._config = { ...this._config, hash };
+          this._config = { 
+            type: 'custom:reusable-card-parent',
+            hash: hash, 
+            card: this._config.card 
+          };
           this.configChanged(this._config);
         }
       });
     }
 
-    if (cardYamlTextarea) {
-      let debounceTimer;
-      cardYamlTextarea.addEventListener('input', (e) => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-          const yaml = e.target.value;
-          try {
-            // Try to parse as JSON first (in case they paste JSON)
-            let parsed;
-            if (yaml.trim().startsWith('{')) {
-              parsed = JSON.parse(yaml);
-            } else {
-              parsed = this.parseYamlish(yaml);
-            }
-            
-            if (parsed && parsed.type) {
-              yamlError.style.display = 'none';
-              this._config = { ...this._config, card: parsed };
-              this.configChanged(this._config);
-            } else {
-              yamlError.textContent = 'Card must have a "type" property';
-              yamlError.style.display = 'block';
-            }
-          } catch (err) {
-            yamlError.textContent = 'Invalid YAML/JSON: ' + err.message;
-            yamlError.style.display = 'block';
-          }
-        }, 500);
+    if (toggleButton) {
+      toggleButton.addEventListener('click', () => {
+        this._toggleMode();
+      });
+    }
+
+    if (changeCardButton) {
+      changeCardButton.addEventListener('click', () => {
+        this._config = { 
+          type: 'custom:reusable-card-parent',
+          hash: this._config.hash, 
+          card: null 
+        };
+        this.configChanged(this._config);
+        this.render();
       });
     }
   }
@@ -633,6 +626,7 @@ class ReusableCardChild extends HTMLElement {
 
   static getStubConfig() {
     return {
+      type: 'custom:reusable-card-child',
       hash: '#my-card'
     };
   }
@@ -666,6 +660,9 @@ class ReusableCardChildEditor extends HTMLElement {
   }
 
   configChanged(newConfig) {
+    // Always ensure type is present
+    newConfig.type = 'custom:reusable-card-child';
+    
     const event = new Event('config-changed', {
       bubbles: true,
       composed: true,
@@ -763,7 +760,10 @@ class ReusableCardChildEditor extends HTMLElement {
     const hashSelect = this.shadowRoot.getElementById('hash');
     if (hashSelect) {
       hashSelect.addEventListener('change', (e) => {
-        this._config = { ...this._config, hash: e.target.value };
+        this._config = { 
+          type: 'custom:reusable-card-child',
+          hash: e.target.value 
+        };
         this.configChanged(this._config);
       });
     }
@@ -779,20 +779,20 @@ customElements.define('reusable-card-child-editor', ReusableCardChildEditor);
 // Register cards with Home Assistant
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: 'reusable-card-parent',
+  type: 'custom:reusable-card-parent',
   name: 'Reusable Card Parent',
   description: 'Define and display a reusable card template',
   preview: true,
 });
 window.customCards.push({
-  type: 'reusable-card-child',
+  type: 'custom:reusable-card-child',
   name: 'Reusable Card Child',
   description: 'Display a saved card template',
   preview: false,
 });
 
 console.info(
-  '%c REUSABLE-CARDS %c v1.1.1 ',
+  '%c REUSABLE-CARDS %c v1.1.3 ',
   'color: white; background: #3498db; font-weight: bold;',
   'color: #3498db; background: white; font-weight: bold;'
 );
