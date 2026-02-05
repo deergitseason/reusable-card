@@ -29,6 +29,7 @@ class ReusableCardsSensor(SensorEntity):
         self._attr_name = "Reusable Cards"
         self._attr_unique_id = f"{DOMAIN}_sensor"
         self._attr_icon = "mdi:card-multiple"
+        self._unsub = None
         
     @property
     def state(self):
@@ -46,10 +47,18 @@ class ReusableCardsSensor(SensorEntity):
         }
     
     async def async_added_to_hass(self) -> None:
-        """Register callbacks."""
+        """Register callbacks when entity is added."""
         @callback
         def card_updated(event):
             """Handle card updated event."""
-            self.async_schedule_update_ha_state(True)
+            _LOGGER.debug(f"Card updated event received: {event.data}")
+            self.async_write_ha_state()
         
-        self.hass.bus.async_listen(f"{DOMAIN}_updated", card_updated)
+        self._unsub = self.hass.bus.async_listen(f"{DOMAIN}_updated", card_updated)
+        _LOGGER.debug("Registered listener for card updates")
+    
+    async def async_will_remove_from_hass(self) -> None:
+        """Unregister callbacks when entity is removed."""
+        if self._unsub:
+            self._unsub()
+            self._unsub = None
