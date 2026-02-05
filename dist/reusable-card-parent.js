@@ -237,9 +237,18 @@ class ReusableCardParentEditor extends HTMLElement {
   attachEventListeners() {
     const hashInput = this.shadowRoot.getElementById('hash');
     if (hashInput) {
-      hashInput.addEventListener('change', (e) => {
+      // Only update on blur (when user leaves the field), not on every keystroke
+      hashInput.addEventListener('blur', (e) => {
         this._config.hash = e.target.value;
         this.configChanged(this._config);
+      });
+      
+      // Also update on Enter key
+      hashInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          this._config.hash = e.target.value;
+          this.configChanged(this._config);
+        }
       });
     }
   }
