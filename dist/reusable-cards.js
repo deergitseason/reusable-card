@@ -1,7 +1,30 @@
 // Reusable Cards for Home Assistant
-// Parent and Child card components
+// Parent and Child card components with improved GUI editor
+
+const CARD_VERSION = '1.2.0';
 
 let parentInstanceCounter = 0;
+
+// Helper to get card helpers
+const getCardHelpers = async () => {
+  if (window.loadCardHelpers) {
+    return await window.loadCardHelpers();
+  }
+  return null;
+};
+
+// Helper to get lovelace config
+const getLovelace = () => {
+  const root = document.querySelector('home-assistant');
+  const main = root?.shadowRoot?.querySelector('home-assistant-main');
+  const panel = main?.shadowRoot?.querySelector('ha-panel-lovelace');
+  const lovelace = panel?.lovelace;
+  return lovelace;
+};
+
+// ============================================================================
+// REUSABLE CARD PARENT
+// ============================================================================
 
 class ReusableCardParent extends HTMLElement {
   constructor() {
@@ -10,9 +33,7 @@ class ReusableCardParent extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._cardElement = null;
-    this._saveTimeout = null;
     this._instanceId = ++parentInstanceCounter;
-    console.log(`[ReusableCards Parent #${this._instanceId}] Constructor called`);
   }
 
   setConfig(config) {
@@ -20,95 +41,44 @@ class ReusableCardParent extends HTMLElement {
       throw new Error('You must specify a hash (e.g., hash: "#camera")');
     }
     
-    if (!config.card) {
-      throw new Error('You must specify a card configuration');
-    }
-    
-    const oldConfig = JSON.stringify(this._config);
-    const newConfig = JSON.stringify(config);
-    const configChanged = oldConfig !== newConfig;
-    
-    console.log(`[ReusableCards Parent #${this._instanceId}] setConfig called for "${config.hash}", changed: ${configChanged}`);
-    if (configChanged) {
-      console.log(`[ReusableCards Parent #${this._instanceId}] Old:`, this._config);
-      console.log(`[ReusableCards Parent #${this._instanceId}] New:`, config);
-    }
-    
     this._config = config;
     
-    this.createCard();
-    
-    // Only save if config actually changed and we have hass
-    if (configChanged && this._hass) {
-      console.log(`[ReusableCards Parent #${this._instanceId}] Config changed, triggering save`);
-      this.debouncedSave();
-    } else if (!configChanged) {
-      console.log(`[ReusableCards Parent #${this._instanceId}] Config unchanged, skipping save`);
-    } else if (!this._hass) {
-      console.log(`[ReusableCards Parent #${this._instanceId}] No hass yet, will save when hass arrives`);
+    if (config.card) {
+      this.createCard();
+    } else {
+      // No card yet - show placeholder
+      this.showPlaceholder();
     }
   }
 
   set hass(hass) {
-    const firstHass = !this._hass;
     this._hass = hass;
     
-    // Pass hass to the child card if it exists
     if (this._cardElement && this._cardElement.hass !== hass) {
       this._cardElement.hass = hass;
     }
-    
-    // Save on first hass assignment if we have config
-    if (firstHass && this._config.hash && this._config.card) {
-      console.log(`[ReusableCards Parent #${this._instanceId}] First hass received, triggering save for "${this._config.hash}"`);
-      this.debouncedSave();
-    }
   }
 
-  debouncedSave() {
-    // Clear any pending save
-    if (this._saveTimeout) {
-      clearTimeout(this._saveTimeout);
-    }
-    
-    // Wait 500ms after last change before saving
-    this._saveTimeout = setTimeout(() => {
+  connectedCallback() {
+    // When the card is added to the DOM (including after save), save to storage
+    // Use a small delay to ensure config is fully set
+    if (this._config.hash && this._config.card && this._hass) {
       this.saveToStorage();
-    }, 500);
+    }
   }
 
   async saveToStorage() {
-    if (!this._hass) {
-      console.warn(`[ReusableCards Parent #${this._instanceId}] Cannot save: hass not available`);
-      return;
-    }
-    if (!this._config.hash) {
-      console.warn(`[ReusableCards Parent #${this._instanceId}] Cannot save: no hash configured`);
-      return;
-    }
-    if (!this._config.card) {
-      console.warn(`[ReusableCards Parent #${this._instanceId}] Cannot save: no card config`);
+    if (!this._hass || !this._config.hash || !this._config.card) {
       return;
     }
 
     try {
-      console.log(`[ReusableCards Parent #${this._instanceId}] Saving "${this._config.hash}":`, this._config.card);
-      
       await this._hass.callService('reusable_cards', 'save_card', {
         hash: this._config.hash,
         config: this._config.card
       });
-      
-      console.log(`[ReusableCards Parent #${this._instanceId}] Successfully saved "${this._config.hash}"`);
-      
-      // Debug: Check sensor state after a short delay
-      setTimeout(() => {
-        const sensor = this._hass.states['sensor.reusable_cards'];
-        console.log(`[ReusableCards Parent #${this._instanceId}] Sensor state after save:`, sensor?.attributes?.cards);
-      }, 1000);
-      
     } catch (error) {
-      console.error(`[ReusableCards Parent #${this._instanceId}] Error saving:`, error);
+      console.error(`[ReusableCards Parent] Error saving:`, error);
     }
   }
 
@@ -116,7 +86,14 @@ class ReusableCardParent extends HTMLElement {
     if (!this._config.card) return;
 
     try {
-      const cardElement = await this.createCardElement(this._config.card);
+      const helpers = await getCardHelpers();
+      let cardElement;
+      
+      if (helpers) {
+        cardElement = await helpers.createCardElement(this._config.card);
+      } else {
+        cardElement = await this.createCardElementFallback(this._config.card);
+      }
       
       if (this._cardElement && this._cardElement.parentNode) {
         this.shadowRoot.removeChild(this._cardElement);
@@ -135,26 +112,16 @@ class ReusableCardParent extends HTMLElement {
     }
   }
 
-  async createCardElement(config) {
-    // Handle custom cards
+  async createCardElementFallback(config) {
     if (config.type && config.type.startsWith('custom:')) {
       const tagName = config.type.replace('custom:', '');
       const element = document.createElement(tagName);
-      
       if (element.setConfig) {
         element.setConfig(config);
       }
-      
       return element;
     }
     
-    // Handle built-in cards using Home Assistant's helper
-    const helpers = await window.loadCardHelpers?.();
-    if (helpers) {
-      return helpers.createCardElement(config);
-    }
-    
-    // Fallback: create element directly
     const element = document.createElement(`hui-${config.type}-card`);
     if (element.setConfig) {
       element.setConfig(config);
@@ -164,18 +131,20 @@ class ReusableCardParent extends HTMLElement {
 
   showError(message) {
     this.shadowRoot.innerHTML = `
-      <style>
-        .error {
-          background: var(--error-color);
-          color: white;
-          padding: 16px;
-          border-radius: 4px;
-        }
-      </style>
       <ha-card>
-        <div class="error">
+        <div style="background: var(--error-color); color: white; padding: 16px; border-radius: 4px;">
           <strong>Reusable Card Parent Error</strong><br>
           ${message}
+        </div>
+      </ha-card>
+    `;
+  }
+
+  showPlaceholder() {
+    this.shadowRoot.innerHTML = `
+      <ha-card>
+        <div style="padding: 16px; text-align: center; color: var(--secondary-text-color);">
+          <p>Select a card type in the editor to get started.</p>
         </div>
       </ha-card>
     `;
@@ -195,14 +164,14 @@ class ReusableCardParent extends HTMLElement {
   static getStubConfig() {
     return {
       type: 'custom:reusable-card-parent',
-      hash: '#my-card',
-      card: {
-        type: 'entities',
-        entities: ['sun.sun']
-      }
+      hash: '#my-card'
     };
   }
 }
+
+// ============================================================================
+// REUSABLE CARD PARENT EDITOR
+// ============================================================================
 
 class ReusableCardParentEditor extends HTMLElement {
   constructor() {
@@ -210,274 +179,312 @@ class ReusableCardParentEditor extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._hass = null;
+    this._lovelace = null;
+    this._helpers = null;
     this._cardEditorEl = null;
-    this._cardGUIMode = true;
-    this._cardGUIModeAvailable = true;
+    this._subElementEditorConfig = null;
   }
 
   setConfig(config) {
     this._config = {
       type: config.type || 'custom:reusable-card-parent',
-      hash: config.hash || '#my-card',
+      hash: config.hash || '',
       card: config.card || null
     };
-    this.render();
+    this._render();
   }
 
   set hass(hass) {
     this._hass = hass;
-    if (this._cardEditorEl) {
-      this._cardEditorEl.hass = hass;
-    }
-    if (!this.shadowRoot.hasChildNodes()) {
-      this.render();
+    
+    // Pass hass to sub-editors if they exist
+    const elements = this.shadowRoot?.querySelectorAll('hui-card-element-editor, hui-card-picker');
+    elements?.forEach(el => {
+      el.hass = hass;
+    });
+    
+    if (!this.shadowRoot?.hasChildNodes()) {
+      this._render();
     }
   }
 
-  configChanged(newConfig) {
-    // Always ensure type is present
+  set lovelace(lovelace) {
+    this._lovelace = lovelace;
+  }
+
+  get lovelace() {
+    return this._lovelace || getLovelace();
+  }
+
+  _configChanged(newConfig) {
     newConfig.type = 'custom:reusable-card-parent';
     
-    const event = new Event('config-changed', {
+    const event = new CustomEvent('config-changed', {
+      detail: { config: newConfig },
       bubbles: true,
       composed: true,
     });
-    event.detail = { config: newConfig };
     this.dispatchEvent(event);
   }
 
-  _toggleMode() {
-    if (this._cardEditorEl && this._cardEditorEl.toggleMode) {
-      this._cardEditorEl.toggleMode();
+  _hashChanged(ev) {
+    let hash = ev.target.value.trim();
+    if (hash && !hash.startsWith('#')) {
+      hash = '#' + hash;
     }
+    
+    this._config = {
+      ...this._config,
+      hash: hash
+    };
+    this._configChanged(this._config);
   }
 
   _cardConfigChanged(ev) {
     ev.stopPropagation();
+    
     const cardConfig = ev.detail.config;
-    this._config = { 
-      type: 'custom:reusable-card-parent',
-      hash: this._config.hash,
-      card: cardConfig 
+    
+    this._config = {
+      ...this._config,
+      card: cardConfig
     };
-    this._cardGUIModeAvailable = ev.detail.guiModeAvailable !== false;
-    this.configChanged(this._config);
+    this._configChanged(this._config);
+    
+    // Re-render to show the editor for the new card
+    if (!this._config.card?.type && cardConfig?.type) {
+      this._render();
+    }
   }
 
   _cardGUIModeChanged(ev) {
     ev.stopPropagation();
-    this._cardGUIMode = ev.detail.guiMode;
-    this._cardGUIModeAvailable = ev.detail.guiModeAvailable;
-    this.requestUpdate();
+    this._GUImode = ev.detail.guiMode;
+    this._guiModeAvailable = ev.detail.guiModeAvailable;
   }
 
-  requestUpdate() {
-    this.render();
+  _toggleMode() {
+    const editor = this.shadowRoot?.querySelector('hui-card-element-editor');
+    if (editor?.toggleMode) {
+      editor.toggleMode();
+    }
   }
 
-  render() {
+  _deleteCard() {
+    this._config = {
+      ...this._config,
+      card: null
+    };
+    this._configChanged(this._config);
+    this._render();
+  }
+
+  async _render() {
     if (!this._hass) return;
 
-    const hashValue = this._config.hash || '#my-card';
-    const hasCard = this._config.card && this._config.card.type;
-
+    const hasCard = this._config.card?.type;
+    
     this.shadowRoot.innerHTML = `
       <style>
-        .editor {
+        :host {
+          display: block;
+        }
+        .container {
           padding: 16px;
         }
-        .info {
-          padding: 12px;
+        .info-box {
           background: var(--secondary-background-color);
-          border-radius: 4px;
+          padding: 12px 16px;
+          border-radius: var(--ha-card-border-radius, 12px);
           margin-bottom: 16px;
+        }
+        .info-box strong {
+          color: var(--primary-text-color);
+        }
+        .info-box p {
+          margin: 8px 0 0 0;
+          color: var(--secondary-text-color);
           font-size: 0.9em;
         }
-        .form-group {
+        
+        .form-row {
           margin-bottom: 16px;
         }
-        .form-group label {
+        .form-row label {
           display: block;
+          font-weight: 500;
           margin-bottom: 8px;
-          font-weight: bold;
-        }
-        .form-group input {
-          width: 100%;
-          padding: 10px;
-          border: 1px solid var(--divider-color);
-          border-radius: 4px;
-          background: var(--primary-background-color);
           color: var(--primary-text-color);
-          box-sizing: border-box;
-          font-size: 14px;
         }
-        .form-group input:focus {
+        .form-row input {
+          width: 100%;
+          padding: 12px;
+          border: 1px solid var(--divider-color);
+          border-radius: var(--ha-card-border-radius, 8px);
+          background: var(--card-background-color, var(--ha-card-background));
+          color: var(--primary-text-color);
+          font-size: 14px;
+          box-sizing: border-box;
+        }
+        .form-row input:focus {
           outline: none;
           border-color: var(--primary-color);
         }
-        .form-group small {
-          display: block;
-          margin-top: 6px;
-          color: var(--secondary-text-color);
+        .form-row .helper-text {
           font-size: 12px;
+          color: var(--secondary-text-color);
+          margin-top: 4px;
         }
-        .card-editor-container {
-          margin-top: 16px;
+        
+        .card-section {
           border: 1px solid var(--divider-color);
-          border-radius: 4px;
-          padding: 16px;
-          background: var(--card-background-color);
+          border-radius: var(--ha-card-border-radius, 12px);
+          overflow: hidden;
         }
-        .card-editor-header {
+        .card-section-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 12px;
+          padding: 12px 16px;
+          background: var(--secondary-background-color);
+          border-bottom: 1px solid var(--divider-color);
         }
-        .card-editor-header h3 {
+        .card-section-header h3 {
           margin: 0;
-          font-size: 1em;
-          font-weight: bold;
+          font-size: 14px;
+          font-weight: 500;
         }
-        .button-group {
+        .card-section-content {
+          padding: 16px;
+        }
+        
+        .button-row {
           display: flex;
           gap: 8px;
         }
-        .mode-toggle, .change-card {
-          padding: 4px 12px;
-          border: 1px solid var(--primary-color);
-          border-radius: 4px;
-          background: transparent;
-          color: var(--primary-color);
-          cursor: pointer;
-          font-size: 12px;
-        }
-        .mode-toggle:hover, .change-card:hover {
+        .editor-button {
+          padding: 6px 12px;
+          border: none;
+          border-radius: 6px;
           background: var(--primary-color);
-          color: var(--text-primary-color);
+          color: var(--text-primary-color, white);
+          font-size: 12px;
+          cursor: pointer;
+          transition: opacity 0.2s;
         }
-        .mode-toggle:disabled {
+        .editor-button:hover {
+          opacity: 0.9;
+        }
+        .editor-button.secondary {
+          background: transparent;
+          border: 1px solid var(--primary-color);
+          color: var(--primary-color);
+        }
+        .editor-button:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
       </style>
-      <div class="editor">
-        <div class="info">
-          <strong>Reusable Card Parent</strong><br>
-          Define a card template that can be reused with child cards.
+      
+      <div class="container">
+        <div class="info-box">
+          <strong>Reusable Card Parent</strong>
+          <p>Define a card template that can be reused across your dashboard with child cards.</p>
         </div>
         
-        <div class="form-group">
-          <label for="hash">Template Hash</label>
+        <div class="form-row">
+          <label>Template Hash</label>
           <input 
             type="text" 
-            id="hash" 
-            value="${hashValue}"
+            id="hash-input"
+            value="${this._config.hash || ''}"
             placeholder="#camera"
           />
-          <small>Unique identifier (e.g., #camera, #lights, #weather)</small>
+          <div class="helper-text">
+            Unique identifier for this template (e.g., #camera, #lights). 
+            Use the same hash in child cards to display this template.
+          </div>
         </div>
-
-        <div class="card-editor-container">
-          <div class="card-editor-header">
+        
+        <div class="card-section">
+          <div class="card-section-header">
             <h3>Card Configuration</h3>
             ${hasCard ? `
-              <div class="button-group">
-                <button 
-                  class="mode-toggle" 
-                  id="toggle-mode"
-                  ${!this._cardGUIModeAvailable ? 'disabled' : ''}
-                >
-                  ${this._cardGUIMode ? 'Show Code Editor' : 'Show Visual Editor'}
+              <div class="button-row">
+                <button class="editor-button secondary" id="toggle-mode-btn">
+                  Show Code Editor
                 </button>
-                <button class="change-card" id="change-card">
+                <button class="editor-button secondary" id="change-card-btn">
                   Change Card
                 </button>
               </div>
             ` : ''}
           </div>
-          <div id="card-editor-placeholder"></div>
+          <div class="card-section-content" id="editor-container">
+            <!-- Card editor or picker will be inserted here -->
+          </div>
         </div>
       </div>
     `;
-
-    this.attachEventListeners();
-    this.renderCardEditor();
+    
+    // Attach event listeners
+    const hashInput = this.shadowRoot.getElementById('hash-input');
+    hashInput?.addEventListener('change', this._hashChanged.bind(this));
+    hashInput?.addEventListener('input', (ev) => {
+      // Live validation feedback
+      let val = ev.target.value;
+      if (val && !val.startsWith('#')) {
+        ev.target.style.borderColor = 'var(--warning-color)';
+      } else {
+        ev.target.style.borderColor = '';
+      }
+    });
+    
+    const toggleBtn = this.shadowRoot.getElementById('toggle-mode-btn');
+    toggleBtn?.addEventListener('click', this._toggleMode.bind(this));
+    
+    const changeBtn = this.shadowRoot.getElementById('change-card-btn');
+    changeBtn?.addEventListener('click', this._deleteCard.bind(this));
+    
+    // Render the card editor or picker
+    await this._renderCardEditor();
   }
 
-  async renderCardEditor() {
-    const placeholder = this.shadowRoot.getElementById('card-editor-placeholder');
-    if (!placeholder || !this._hass) return;
-
-    // Clear existing editor
-    placeholder.innerHTML = '';
-
-    if (this._config.card && this._config.card.type) {
-      // Create card element editor for existing card
+  async _renderCardEditor() {
+    const container = this.shadowRoot.getElementById('editor-container');
+    if (!container || !this._hass) return;
+    
+    container.innerHTML = '';
+    
+    if (this._config.card?.type) {
+      // Show the card element editor for existing card
       const cardEditor = document.createElement('hui-card-element-editor');
       cardEditor.hass = this._hass;
+      cardEditor.lovelace = this.lovelace;
       cardEditor.value = this._config.card;
       
       cardEditor.addEventListener('config-changed', this._cardConfigChanged.bind(this));
       cardEditor.addEventListener('GUImode-changed', this._cardGUIModeChanged.bind(this));
       
-      placeholder.appendChild(cardEditor);
+      container.appendChild(cardEditor);
       this._cardEditorEl = cardEditor;
     } else {
-      // Create card picker for new card
+      // Show the card picker to select a new card
       const cardPicker = document.createElement('hui-card-picker');
       cardPicker.hass = this._hass;
+      cardPicker.lovelace = this.lovelace;
       
       cardPicker.addEventListener('config-changed', this._cardConfigChanged.bind(this));
       
-      placeholder.appendChild(cardPicker);
+      container.appendChild(cardPicker);
       this._cardEditorEl = null;
     }
   }
-
-  attachEventListeners() {
-    const hashInput = this.shadowRoot.getElementById('hash');
-    const toggleButton = this.shadowRoot.getElementById('toggle-mode');
-    const changeCardButton = this.shadowRoot.getElementById('change-card');
-
-    if (hashInput) {
-      hashInput.addEventListener('change', (e) => {
-        let hash = e.target.value.trim();
-        // Auto-add # if missing
-        if (hash && !hash.startsWith('#')) {
-          hash = '#' + hash;
-          e.target.value = hash;
-        }
-        if (this._config.hash !== hash) {
-          this._config = { 
-            type: 'custom:reusable-card-parent',
-            hash: hash, 
-            card: this._config.card 
-          };
-          this.configChanged(this._config);
-        }
-      });
-    }
-
-    if (toggleButton) {
-      toggleButton.addEventListener('click', () => {
-        this._toggleMode();
-      });
-    }
-
-    if (changeCardButton) {
-      changeCardButton.addEventListener('click', () => {
-        this._config = { 
-          type: 'custom:reusable-card-parent',
-          hash: this._config.hash, 
-          card: null 
-        };
-        this.configChanged(this._config);
-        this.render();
-      });
-    }
-  }
 }
+
+// ============================================================================
+// REUSABLE CARD CHILD
+// ============================================================================
 
 class ReusableCardChild extends HTMLElement {
   constructor() {
@@ -486,7 +493,7 @@ class ReusableCardChild extends HTMLElement {
     this._config = {};
     this._hass = null;
     this._cardElement = null;
-    this._lastCardConfig = null; // Track the config we rendered
+    this._lastCardConfig = null;
   }
 
   setConfig(config) {
@@ -495,24 +502,21 @@ class ReusableCardChild extends HTMLElement {
     }
     
     this._config = config;
-    this._lastCardConfig = null; // Reset so we rebuild
+    this._lastCardConfig = null;
     this.createCard();
   }
 
   set hass(hass) {
     this._hass = hass;
     
-    // Check if the card template has changed
     const sensor = hass.states['sensor.reusable_cards'];
     const cards = sensor?.attributes?.cards || {};
     const currentConfig = cards[this._config.hash];
     const configJson = JSON.stringify(currentConfig);
     
-    // Rebuild card if the template changed
     if (configJson !== this._lastCardConfig) {
       this.createCard();
     } else if (this._cardElement && this._cardElement.hass !== hass) {
-      // Just pass hass update to existing card
       this._cardElement.hass = hass;
     }
   }
@@ -520,9 +524,8 @@ class ReusableCardChild extends HTMLElement {
   async createCard() {
     if (!this._hass || !this._config.hash) return;
 
-    // Get card config from sensor
     const sensor = this._hass.states['sensor.reusable_cards'];
-    if (!sensor || !sensor.attributes || !sensor.attributes.cards) {
+    if (!sensor?.attributes?.cards) {
       this.showError('Reusable Cards integration not found. Make sure it is installed and Home Assistant has been restarted.');
       return;
     }
@@ -531,29 +534,34 @@ class ReusableCardChild extends HTMLElement {
     const cardConfig = cards[this._config.hash];
     
     if (!cardConfig) {
-      this.showError(`Card template "${this._config.hash}" not found. Make sure you have a reusable-card-parent card with this hash.`);
+      this.showError(`Card template "${this._config.hash}" not found. Create a reusable-card-parent with this hash first.`);
       this._lastCardConfig = null;
       return;
     }
 
     const configJson = JSON.stringify(cardConfig);
     
-    // Skip if we already rendered this exact config
     if (configJson === this._lastCardConfig && this._cardElement) {
       return;
     }
 
-    // Create the card element
     try {
-      const cardElement = await this.createCardElement(cardConfig);
+      const helpers = await getCardHelpers();
+      let cardElement;
       
-      if (this._cardElement && this._cardElement.parentNode) {
+      if (helpers) {
+        cardElement = await helpers.createCardElement(cardConfig);
+      } else {
+        cardElement = await this.createCardElementFallback(cardConfig);
+      }
+      
+      if (this._cardElement?.parentNode) {
         this.shadowRoot.removeChild(this._cardElement);
       }
       
       this._cardElement = cardElement;
       this._cardElement.hass = this._hass;
-      this._lastCardConfig = configJson; // Track what we rendered
+      this._lastCardConfig = configJson;
       
       this.shadowRoot.innerHTML = '';
       this.shadowRoot.appendChild(this._cardElement);
@@ -563,26 +571,16 @@ class ReusableCardChild extends HTMLElement {
     }
   }
 
-  async createCardElement(config) {
-    // Handle custom cards
-    if (config.type && config.type.startsWith('custom:')) {
+  async createCardElementFallback(config) {
+    if (config.type?.startsWith('custom:')) {
       const tagName = config.type.replace('custom:', '');
       const element = document.createElement(tagName);
-      
       if (element.setConfig) {
         element.setConfig(config);
       }
-      
       return element;
     }
     
-    // Handle built-in cards using Home Assistant's helper
-    const helpers = await window.loadCardHelpers?.();
-    if (helpers) {
-      return helpers.createCardElement(config);
-    }
-    
-    // Fallback: create element directly
     const element = document.createElement(`hui-${config.type}-card`);
     if (element.setConfig) {
       element.setConfig(config);
@@ -592,21 +590,9 @@ class ReusableCardChild extends HTMLElement {
 
   showError(message) {
     this.shadowRoot.innerHTML = `
-      <style>
-        .error {
-          background: var(--error-color);
-          color: white;
-          padding: 16px;
-          border-radius: 4px;
-        }
-        .error strong {
-          display: block;
-          margin-bottom: 8px;
-        }
-      </style>
       <ha-card>
-        <div class="error">
-          <strong>Reusable Card Error</strong>
+        <div style="background: var(--error-color); color: white; padding: 16px; border-radius: 4px;">
+          <strong>Reusable Card Error</strong><br>
           ${message}
         </div>
       </ha-card>
@@ -614,7 +600,7 @@ class ReusableCardChild extends HTMLElement {
   }
 
   getCardSize() {
-    if (this._cardElement && this._cardElement.getCardSize) {
+    if (this._cardElement?.getCardSize) {
       return this._cardElement.getCardSize();
     }
     return 3;
@@ -632,167 +618,195 @@ class ReusableCardChild extends HTMLElement {
   }
 }
 
+// ============================================================================
+// REUSABLE CARD CHILD EDITOR
+// ============================================================================
+
 class ReusableCardChildEditor extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
     this._config = {};
     this._hass = null;
+    this._lastHashes = '';
   }
 
   setConfig(config) {
     this._config = config;
-    this.render();
+    this._render();
   }
 
   set hass(hass) {
-    const oldHashes = this._hass ? 
-      Object.keys(this._hass.states['sensor.reusable_cards']?.attributes?.cards || {}).join(',') : '';
-    const newHashes = hass ? 
-      Object.keys(hass.states['sensor.reusable_cards']?.attributes?.cards || {}).join(',') : '';
+    const newHashes = Object.keys(hass?.states['sensor.reusable_cards']?.attributes?.cards || {}).join(',');
+    const hashesChanged = this._lastHashes !== newHashes;
     
     this._hass = hass;
+    this._lastHashes = newHashes;
     
-    // Only re-render if hashes changed (not on every hass update)
-    if (oldHashes !== newHashes || !this.shadowRoot.hasChildNodes()) {
-      this.render();
+    if (hashesChanged || !this.shadowRoot?.hasChildNodes()) {
+      this._render();
     }
   }
 
-  configChanged(newConfig) {
-    // Always ensure type is present
+  _configChanged(newConfig) {
     newConfig.type = 'custom:reusable-card-child';
     
-    const event = new Event('config-changed', {
+    const event = new CustomEvent('config-changed', {
+      detail: { config: newConfig },
       bubbles: true,
       composed: true,
     });
-    event.detail = { config: newConfig };
     this.dispatchEvent(event);
   }
 
-  render() {
+  _hashChanged(ev) {
+    this._config = {
+      ...this._config,
+      hash: ev.target.value
+    };
+    this._configChanged(this._config);
+  }
+
+  _render() {
     if (!this._hass) return;
 
     const sensor = this._hass.states['sensor.reusable_cards'];
     const cards = sensor?.attributes?.cards || {};
     const hashes = Object.keys(cards);
-    const hashValue = this._config.hash || '';
+    const currentHash = this._config.hash || '';
 
     this.shadowRoot.innerHTML = `
       <style>
-        .editor {
+        :host {
+          display: block;
+        }
+        .container {
           padding: 16px;
         }
-        .info {
-          padding: 12px;
+        .info-box {
           background: var(--secondary-background-color);
-          border-radius: 4px;
+          padding: 12px 16px;
+          border-radius: var(--ha-card-border-radius, 12px);
           margin-bottom: 16px;
+        }
+        .info-box strong {
+          color: var(--primary-text-color);
+        }
+        .info-box p {
+          margin: 8px 0 0 0;
+          color: var(--secondary-text-color);
           font-size: 0.9em;
         }
-        .form-group {
+        
+        .form-row {
           margin-bottom: 16px;
         }
-        .form-group label {
+        .form-row label {
           display: block;
+          font-weight: 500;
           margin-bottom: 8px;
-          font-weight: bold;
-        }
-        .form-group select {
-          width: 100%;
-          padding: 10px;
-          border: 1px solid var(--divider-color);
-          border-radius: 4px;
-          background: var(--primary-background-color);
           color: var(--primary-text-color);
-          box-sizing: border-box;
+        }
+        .form-row select {
+          width: 100%;
+          padding: 12px;
+          border: 1px solid var(--divider-color);
+          border-radius: var(--ha-card-border-radius, 8px);
+          background: var(--card-background-color, var(--ha-card-background));
+          color: var(--primary-text-color);
           font-size: 14px;
+          box-sizing: border-box;
           cursor: pointer;
         }
-        .form-group select:focus {
+        .form-row select:focus {
           outline: none;
           border-color: var(--primary-color);
         }
-        .form-group small {
-          display: block;
-          margin-top: 8px;
+        .form-row .helper-text {
+          font-size: 12px;
           color: var(--secondary-text-color);
+          margin-top: 4px;
         }
-        .no-templates {
-          padding: 16px;
-          background: var(--warning-color, #ffc107);
+        
+        .warning-box {
+          background: var(--warning-color);
           color: var(--primary-text-color);
-          border-radius: 4px;
+          padding: 16px;
+          border-radius: var(--ha-card-border-radius, 12px);
           text-align: center;
         }
+        .warning-box strong {
+          display: block;
+          margin-bottom: 8px;
+        }
+        .warning-box code {
+          background: rgba(0,0,0,0.1);
+          padding: 2px 6px;
+          border-radius: 4px;
+        }
       </style>
-      <div class="editor">
-        <div class="info">
-          <strong>Reusable Card Child</strong><br>
-          This card displays a card template defined with <code>reusable-card-parent</code>.
+      
+      <div class="container">
+        <div class="info-box">
+          <strong>Reusable Card Child</strong>
+          <p>Display a card template that was defined with a parent card.</p>
         </div>
         
         ${hashes.length > 0 ? `
-          <div class="form-group">
-            <label for="hash">Select Card Template</label>
-            <select id="hash">
-              <option value="" ${!hashValue ? 'selected' : ''}>-- Select a template --</option>
+          <div class="form-row">
+            <label>Select Card Template</label>
+            <select id="hash-select">
+              <option value="" ${!currentHash ? 'selected' : ''}>-- Select a template --</option>
               ${hashes.map(h => `
-                <option value="${h}" ${hashValue === h ? 'selected' : ''}>${h}</option>
+                <option value="${h}" ${currentHash === h ? 'selected' : ''}>${h}</option>
               `).join('')}
             </select>
-            <small>Choose from available card templates</small>
+            <div class="helper-text">
+              Choose from available templates defined by parent cards.
+            </div>
           </div>
         ` : `
-          <div class="no-templates">
-            <strong>No card templates found.</strong><br>
-            Create a <code>reusable-card-parent</code> card first.
+          <div class="warning-box">
+            <strong>No card templates found</strong>
+            Create a <code>reusable-card-parent</code> card first to define a template.
           </div>
         `}
       </div>
     `;
 
-    this.attachEventListeners();
-  }
-
-  attachEventListeners() {
-    const hashSelect = this.shadowRoot.getElementById('hash');
-    if (hashSelect) {
-      hashSelect.addEventListener('change', (e) => {
-        this._config = { 
-          type: 'custom:reusable-card-child',
-          hash: e.target.value 
-        };
-        this.configChanged(this._config);
-      });
-    }
+    const hashSelect = this.shadowRoot.getElementById('hash-select');
+    hashSelect?.addEventListener('change', this._hashChanged.bind(this));
   }
 }
 
-// Register custom elements
+// ============================================================================
+// REGISTER COMPONENTS
+// ============================================================================
+
 customElements.define('reusable-card-parent', ReusableCardParent);
 customElements.define('reusable-card-parent-editor', ReusableCardParentEditor);
 customElements.define('reusable-card-child', ReusableCardChild);
 customElements.define('reusable-card-child-editor', ReusableCardChildEditor);
 
-// Register cards with Home Assistant
+// Register with Home Assistant card picker
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: 'custom:reusable-card-parent',
+  type: 'reusable-card-parent',
   name: 'Reusable Card Parent',
-  description: 'Define and display a reusable card template',
+  description: 'Define a reusable card template',
   preview: true,
+  documentationURL: 'https://github.com/deergitseason/reusable-cards',
 });
 window.customCards.push({
-  type: 'custom:reusable-card-child',
+  type: 'reusable-card-child',
   name: 'Reusable Card Child',
   description: 'Display a saved card template',
   preview: false,
+  documentationURL: 'https://github.com/deergitseason/reusable-cards',
 });
 
 console.info(
-  '%c REUSABLE-CARDS %c v1.1.3 ',
+  `%c REUSABLE-CARDS %c v${CARD_VERSION} `,
   'color: white; background: #3498db; font-weight: bold;',
   'color: #3498db; background: white; font-weight: bold;'
 );
