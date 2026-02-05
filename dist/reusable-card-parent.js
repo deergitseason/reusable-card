@@ -149,6 +149,7 @@ class ReusableCardParentEditor extends HTMLElement {
   }
 
   setConfig(config) {
+    console.log('Parent editor setConfig called with:', config);
     this._config = {
       hash: config.hash || '#my-card',
       card: config.card || { type: 'entities', entities: [] }
@@ -158,10 +159,14 @@ class ReusableCardParentEditor extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    this.render();
+    // Re-render when hass is set, in case we need it for the card editor
+    if (this.shadowRoot.children.length > 0) {
+      this.renderCardEditor();
+    }
   }
 
   configChanged(newConfig) {
+    console.log('Config changed to:', newConfig);
     const event = new Event('config-changed', {
       bubbles: true,
       composed: true,
@@ -171,6 +176,7 @@ class ReusableCardParentEditor extends HTMLElement {
   }
 
   render() {
+    console.log('Rendering parent editor');
     const hashValue = this._config.hash || '';
 
     this.shadowRoot.innerHTML = `
@@ -183,7 +189,7 @@ class ReusableCardParentEditor extends HTMLElement {
         }
         .form-group label {
           display: block;
-          margin-bottom: 4px;
+          margin-bottom: 8px;
           font-weight: bold;
         }
         .form-group input {
@@ -231,13 +237,15 @@ class ReusableCardParentEditor extends HTMLElement {
     `;
 
     this.attachEventListeners();
-    this.renderCardEditor();
+    
+    // Delay rendering the card editor to ensure hass is available
+    setTimeout(() => this.renderCardEditor(), 100);
   }
 
   attachEventListeners() {
     const hashInput = this.shadowRoot.getElementById('hash');
     if (hashInput) {
-      // Only update on blur (when user leaves the field), not on every keystroke
+      // Only update on blur (when user leaves the field)
       hashInput.addEventListener('blur', (e) => {
         this._config.hash = e.target.value;
         this.configChanged(this._config);
@@ -255,38 +263,64 @@ class ReusableCardParentEditor extends HTMLElement {
 
   async renderCardEditor() {
     const cardEditorContainer = this.shadowRoot.getElementById('card-editor');
-    if (!cardEditorContainer) return;
+    if (!cardEditorContainer) {
+      console.log('Card editor container not found');
+      return;
+    }
+
+    if (!this._hass) {
+      console.log('Hass not available yet, waiting...');
+      cardEditorContainer.innerHTML = '<p>Loading editor...</p>';
+      return;
+    }
 
     const cardConfig = this._config.card || { type: 'entities', entities: [] };
+    console.log('Rendering card editor with config:', cardConfig);
     
-    // Create a proper card config editor element
+    // Try to get the card editor element
     const GUIEditor = customElements.get('hui-card-element-editor');
     
     if (GUIEditor) {
-      const editor = new GUIEditor();
-      editor.hass = this._hass;
-      editor.value = cardConfig;
-      
-      editor.addEventListener('value-changed', (ev) => {
-        ev.stopPropagation();
-        // Update the nested card config, NOT the parent config
-        this._config.card = ev.detail.value;
-        // Emit the full parent config (with hash + card)
-        this.configChanged(this._config);
-      });
-      
-      cardEditorContainer.innerHTML = '';
-      cardEditorContainer.appendChild(editor);
+      console.log('Found hui-card-element-editor, creating editor');
+      try {
+        const editor = new GUIEditor();
+        editor.hass = this._hass;
+        editor.value = cardConfig;
+        
+        editor.addEventListener('value-changed', (ev) => {
+          ev.stopPropagation();
+          console.log('Card config changed:', ev.detail.value);
+          // Update the nested card config, NOT the parent config
+          this._config.card = ev.detail.value;
+          // Emit the full parent config (with hash + card)
+          this.configChanged(this._config);
+        });
+        
+        cardEditorContainer.innerHTML = '';
+        cardEditorContainer.appendChild(editor);
+        console.log('Card editor rendered successfully');
+      } catch (error) {
+        console.error('Error creating card editor:', error);
+        this.showEditorFallback(cardEditorContainer, cardConfig);
+      }
     } else {
-      // Fallback to showing instructions if editor not available
-      cardEditorContainer.innerHTML = `
-        <div style="padding: 12px; background: var(--secondary-background-color); border-radius: 4px;">
-          <p><strong>Card configuration:</strong></p>
-          <p>Edit the parent card in YAML mode to configure the nested card.</p>
-          <p>Current card type: <code>${cardConfig.type || 'none'}</code></p>
-        </div>
-      `;
+      console.log('hui-card-element-editor not found, using fallback');
+      this.showEditorFallback(cardEditorContainer, cardConfig);
     }
+  }
+
+  showEditorFallback(container, cardConfig) {
+    container.innerHTML = `
+      <div style="padding: 12px; background: var(--secondary-background-color); border-radius: 4px;">
+        <p><strong>Visual editor not available.</strong></p>
+        <p>Switch to YAML mode to edit the card configuration.</p>
+        <p>Current card type: <code>${cardConfig.type || 'none'}</code></p>
+        <details>
+          <summary>Current config (JSON)</summary>
+          <pre style="overflow: auto; padding: 8px; background: var(--primary-background-color); border-radius: 4px;">${JSON.stringify(cardConfig, null, 2)}</pre>
+        </details>
+      </div>
+    `;
   }
 }
 
