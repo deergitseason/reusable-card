@@ -2,15 +2,50 @@
 
 Define a card once, use it everywhere. Create reusable card templates that can be referenced across multiple dashboards and views.
 
+## What Makes This Different?
+
+### vs. Decluttering Card / Streamline Card
+
+**This integration is for exact duplicates, not customizable templates:**
+
+- ✅ **Fully GUI-based** - Edit templates visually, no YAML required
+- ✅ **No invisible template cards** - Parent cards are normal, visible cards on your dashboard
+- ✅ **Easy to edit** - Just edit the parent card like any other card, refresh, and all children update
+- ✅ **Perfect for exact copies** - Multiple identical cards across dashboards
+
+- ❌ **No customization per child** - Child cards are exact copies (except layout/visibility)
+- ❌ **Not for parameterized templates** - Can't pass different entities/variables to each child
+
+**Use this if:** You have multiple exact copies of the same card and want easy GUI-based editing.
+
+**Use Decluttering/Streamline if:** You need parameterized templates where each instance shows different entities.
+
 ## Features
 
-- 🎨 **Visual Editor**: Full card editor with drag-and-drop support
-- 🔄 **Reusable Templates**: Define once, use anywhere
+- 🎨 **Fully GUI-Based**: Visual card editor - no YAML template definitions required
+- 👀 **No Invisible Cards**: Parent cards are normal, visible cards you can see and use
+- 📋 **Exact Copies**: Child cards are perfect duplicates of parent cards
+- 🔄 **Easy Updates**: Edit parent, refresh browser, all children update automatically
 - 📁 **YAML Storage**: Templates stored in `/config/reusable-cards-templates/reusable_cards.yaml`
 - 👁️ **Smart Visibility**: Automatically handles visibility conditions in edit mode
-- 🏷️ **View-Scoped**: Templates tagged with the dashboard view they're located in (so you can find them)
+- 🏷️ **View-Tagged**: Templates tagged with their location for easy finding
 - 💾 **Auto-Backup**: Automatic `.bak` file creation on each save
 - 🚫 **No Size Limits**: Store hundreds of templates without sensor attribute limits
+
+<img width="775" height="414" alt="Screenshot 2026-02-06 at 1 31 31 PM" src="https://github.com/user-attachments/assets/3c449d86-8a66-46d7-aff5-ef8ac160b14d" />
+<img width="756" height="951" alt="Screenshot 2026-02-06 at 1 31 02 PM" src="https://github.com/user-attachments/assets/2f9ade71-5c4f-400c-bc23-68928d3a9905" />
+
+## Use Cases
+
+
+Perfect for:
+- 🏠 Identical room control cards across multiple dashboards
+- 📸 Same camera views in different locations
+- 🌡️ Repeated sensor displays (same sensors, different views)
+- 🎛️ Standardized control panels duplicated in multiple places
+- 📱 Mobile + tablet + desktop dashboards with same cards
+
+**Important**: Child cards are **exact copies** - you cannot customize individual children (except layout/visibility conditions). If you need to pass different entities to each instance, use [Decluttering Card](https://github.com/custom-cards/decluttering-card) instead.
 
 ## Installation
 
@@ -76,6 +111,7 @@ card:
     - type: button
       entity: light.porch
 ```
+
 
 ### Using a Template (Child Card)
 
