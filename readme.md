@@ -49,7 +49,7 @@ Perfect for:
 - 🎛️ Standardized control panels duplicated in multiple places
 - 📱 Mobile + tablet + desktop dashboards with same cards
 
-**Important**: Child cards are **exact copies** - you cannot customize individual children (except layout/visibility conditions). If you need to pass different entities to each instance, use [Decluttering Card](https://github.com/custom-cards/decluttering-card) instead.
+**Important**: Child cards are **exact copies** - you cannot customize individual children (except layout/visibility conditions). If you need to pass different entities to each instance, use Streamline/Decluttering Card instead.
 
 ## Installation
 
