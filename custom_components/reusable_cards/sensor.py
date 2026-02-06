@@ -7,6 +7,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 DOMAIN = "reusable_cards"
+STORAGE_DIR = "reusable-cards-templates"
+STORAGE_FILE = "reusable_cards.yaml"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,10 +50,19 @@ class ReusableCardsSensor(SensorEntity):
     def extra_state_attributes(self):
         """Return the state attributes."""
         cards = self.hass.data.get(DOMAIN, {}).get("cards", {})
+        
+        # Calculate storage info
+        import json
+        cards_json = json.dumps(cards)
+        size = len(cards_json)
+        
         return {
             "cards": cards,
             "hashes": list(cards.keys()),
             "last_updated": time.time(),
+            "storage_type": "yaml",
+            "storage_location": f"{STORAGE_DIR}/{STORAGE_FILE}",
+            "total_size_bytes": size,
         }
     
     async def async_added_to_hass(self) -> None:
