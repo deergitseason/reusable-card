@@ -1,7 +1,7 @@
 // Reusable Cards for Home Assistant
 // Parent and Child card components with improved GUI editor
 
-const CARD_VERSION = '1.2.0';
+const CARD_VERSION = '1.2.1';
 
 let parentInstanceCounter = 0;
 
@@ -34,6 +34,9 @@ class ReusableCardParent extends HTMLElement {
     this._hass = null;
     this._cardElement = null;
     this._instanceId = ++parentInstanceCounter;
+    this._savedConfigHash = null;
+    this._pendingSave = false;
+    this._dialogObserver = null;
   }
 
   setConfig(config) {
@@ -46,7 +49,6 @@ class ReusableCardParent extends HTMLElement {
     if (config.card) {
       this.createCard();
     } else {
-      // No card yet - show placeholder
       this.showPlaceholder();
     }
   }
@@ -57,14 +59,115 @@ class ReusableCardParent extends HTMLElement {
     if (this._cardElement && this._cardElement.hass !== hass) {
       this._cardElement.hass = hass;
     }
+    
+    // Mark that we want to save, but only do it if we're connected
+    if (this._config.hash && this._config.card) {
+      this._pendingSave = true;
+      this._trySave();
+    }
   }
 
   connectedCallback() {
-    // When the card is added to the DOM (including after save), save to storage
-    // Use a small delay to ensure config is fully set
-    if (this._config.hash && this._config.card && this._hass) {
-      this.saveToStorage();
+    // Now we're in the DOM - try to save if pending
+    if (this._pendingSave) {
+      // Use requestAnimationFrame to ensure DOM is fully settled
+      requestAnimationFrame(() => {
+        this._trySave();
+      });
     }
+    
+    // Set up observer to watch for dialog closing
+    this._setupDialogObserver();
+  }
+  
+  disconnectedCallback() {
+    // Clean up observer
+    if (this._dialogObserver) {
+      this._dialogObserver.disconnect();
+      this._dialogObserver = null;
+    }
+  }
+  
+  _setupDialogObserver() {
+    // Watch the shadow root of home-assistant for dialog removal
+    const homeAssistant = document.querySelector('home-assistant');
+    const shadowRoot = homeAssistant?.shadowRoot;
+    
+    if (!shadowRoot || this._dialogObserver) return;
+    
+    this._dialogObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const removed of mutation.removedNodes) {
+          if (removed.tagName?.toLowerCase() === 'hui-dialog-edit-card' ||
+              removed.tagName?.toLowerCase() === 'hui-dialog-create-card') {
+            // Dialog was closed - try to save after a short delay
+            setTimeout(() => {
+              if (this._pendingSave) {
+                this._trySave();
+              }
+            }, 100);
+          }
+        }
+      }
+    });
+    
+    this._dialogObserver.observe(shadowRoot, { childList: true });
+  }
+  
+  _trySave() {
+    // Only save if:
+    // 1. We have pending changes
+    // 2. We're connected to DOM (isConnected)
+    // 3. We have a parent element (needed for context check)
+    // 4. We're not in a preview
+    if (!this._pendingSave) return;
+    if (!this.isConnected) return;
+    if (!this.parentElement) return;
+    
+    if (this._isPreviewInstance()) {
+      // Don't clear _pendingSave - we'll retry when dialog closes
+      return;
+    }
+    
+    this._pendingSave = false;
+    this.saveToStorage();
+  }
+  
+  _isPreviewInstance() {
+    // First, check if any edit dialog is open at all
+    // The dialog is inside the shadow root of <home-assistant>
+    const homeAssistant = document.querySelector('home-assistant');
+    const dialogExists = homeAssistant?.shadowRoot?.querySelector('hui-dialog-edit-card, hui-dialog-create-card');
+    
+    // If no dialog is open, we're definitely not a preview
+    if (!dialogExists) {
+      return false;
+    }
+    
+    // Dialog is open - now check if THIS card is inside it or on the dashboard
+    // Traverse up through DOM to see where we are
+    let node = this.parentElement;
+    
+    while (node) {
+      const tag = node.tagName?.toLowerCase() || '';
+      
+      // If we hit hui-dialog-edit-card, we're the preview
+      if (tag === 'hui-dialog-edit-card' || tag === 'hui-dialog-create-card') {
+        return true;
+      }
+      
+      // If we hit home-assistant-main, we're on the dashboard (not preview)
+      if (tag === 'home-assistant-main') {
+        return false;
+      }
+      
+      // Move up the tree
+      node = node.parentElement;
+    }
+    
+    // We couldn't traverse up (not attached to DOM yet) but dialog IS open
+    // Assume we're the preview to be safe
+    return true;
   }
 
   async saveToStorage() {
@@ -72,11 +175,25 @@ class ReusableCardParent extends HTMLElement {
       return;
     }
 
+    // Create a hash of the current config to avoid duplicate saves
+    const configHash = JSON.stringify({
+      hash: this._config.hash,
+      card: this._config.card
+    });
+    
+    // Don't save if we've already saved this exact config
+    if (configHash === this._savedConfigHash) {
+      return;
+    }
+
+    console.log('[ReusableCards] Saving card:', this._config.hash);
+
     try {
       await this._hass.callService('reusable_cards', 'save_card', {
         hash: this._config.hash,
         config: this._config.card
       });
+      this._savedConfigHash = configHash;
     } catch (error) {
       console.error(`[ReusableCards Parent] Error saving:`, error);
     }
