@@ -8,7 +8,7 @@ Define a card once, use it everywhere. Create reusable card templates that can b
 - 🔄 **Reusable Templates**: Define once, use anywhere
 - 📁 **YAML Storage**: Templates stored in `/config/reusable-cards-templates/reusable_cards.yaml`
 - 👁️ **Smart Visibility**: Automatically handles visibility conditions in edit mode
-- 🏷️ **View-Scoped**: Templates can be specific to dashboard views
+- 🏷️ **View-Scoped**: Templates tagged with the dashboard view they're located in (so you can find them)
 - 💾 **Auto-Backup**: Automatic `.bak` file creation on each save
 - 🚫 **No Size Limits**: Store hundreds of templates without sensor attribute limits
 
@@ -98,13 +98,13 @@ show_watermark: true
 
 ### Hash Naming Convention
 
-Hashes follow the format: `#<name>.<view>`
+Hashes follow the format: `#<n>.<view>`
 
-- `#camera.livingroom` - Template for the "livingroom" view
-- `#sensors.dashboard` - Template for the "dashboard" view
-- `#lights.kitchen` - Template for the "kitchen" view
+- `#camera.livingroom` - Camera template on "livingroom" view
+- `#sensors.dashboard` - Sensors template on "dashboard" view  
+- `#lights.kitchen` - Lights template on "kitchen" view
 
-The view name is **automatically appended** when you create a new parent card.
+The view name is **automatically appended** when you create a new parent card. This helps you **locate where the parent template lives** - if you need to edit `#camera.livingroom`, you know to look on the "livingroom" view/dashboard.
 
 ### Storage
 
