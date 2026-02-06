@@ -1,821 +1,297 @@
-// Reusable Cards for Home Assistant
-const CARD_VERSION = '1.4.1';
+# Home Assistant Reusable Cards
 
-// Shared styles
-const WATERMARK_STYLE = `
-  .hash-overlay {
-    position: absolute;
-    bottom: 6px;
-    right: 6px;
-    font-size: 9px;
-    font-family: monospace;
-    color: rgba(255, 255, 255, 0.5);
-    background: rgba(0, 0, 0, 0.3);
-    padding: 1px 4px;
-    border-radius: 3px;
-    pointer-events: none;
-    z-index: 999;
-    line-height: 1;
-    cursor: help;
-  }
-  .hash-overlay::after {
-    content: attr(data-hash);
-    position: absolute;
-    bottom: 100%;
-    right: 0;
-    background: rgba(0, 0, 0, 0.9);
-    color: white;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s;
-    margin-bottom: 4px;
-  }
-  .hash-overlay:hover::after {
-    opacity: 1;
-  }
-`;
+Define a card once, use it everywhere. Create reusable card templates that can be referenced across multiple dashboards and views.
 
-const CARD_WRAPPER_STYLE = `
-  :host { display: block; position: relative; }
-  .card-wrapper { position: relative; display: block; }
-  .card-wrapper > *:first-child { display: block; width: 100%; }
-`;
+## Features
 
-const EDITOR_BASE_STYLE = `
-  :host { display: block; }
-  .container { padding: 16px; }
-  .info-box {
-    background: var(--secondary-background-color);
-    padding: 12px 16px;
-    border-radius: var(--ha-card-border-radius, 12px);
-    margin-bottom: 16px;
-  }
-  .info-box strong { color: var(--primary-text-color); }
-  .info-box p { margin: 8px 0 0 0; color: var(--secondary-text-color); font-size: 0.9em; }
-  .form-row { margin-bottom: 16px; }
-  .form-row label { display: block; font-weight: 500; margin-bottom: 8px; color: var(--primary-text-color); }
-  .form-row .helper-text { font-size: 12px; color: var(--secondary-text-color); margin-top: 4px; }
-  .form-row .helper-text code {
-    background: var(--secondary-background-color);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: monospace;
-  }
-  .checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 16px;
-  }
-  .checkbox-row input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
-  .checkbox-row label { font-size: 14px; color: var(--primary-text-color); cursor: pointer; }
-`;
+- 🎨 **Visual Editor**: Full card editor with drag-and-drop support
+- 🔄 **Reusable Templates**: Define once, use anywhere
+- 📁 **YAML Storage**: Templates stored in `/config/reusable-cards-templates/reusable_cards.yaml`
+- 👁️ **Smart Visibility**: Automatically handles visibility conditions in edit mode
+- 🏷️ **View-Scoped**: Templates can be specific to dashboard views
+- 💾 **Auto-Backup**: Automatic `.bak` file creation on each save
+- 🚫 **No Size Limits**: Store hundreds of templates without sensor attribute limits
 
-// Helpers
-const getCardHelpers = async () => window.loadCardHelpers ? await window.loadCardHelpers() : null;
+## Installation
 
-const getLovelace = () => {
-  const root = document.querySelector('home-assistant');
-  return root?.shadowRoot?.querySelector('home-assistant-main')?.shadowRoot?.querySelector('ha-panel-lovelace')?.lovelace;
-};
+### Step 1: Install Backend Integration
 
-const getViewFromURL = () => {
-  const match = window.location.pathname.match(/\/[^\/]+\/([^\/]+)$/);
-  return match?.[1] || null;
-};
+#### Via HACS (Recommended)
+1. Open **HACS** → **Integrations**
+2. Click **⋮** (three dots) → **Custom repositories**
+3. Add repository: `https://github.com/yourusername/reusable-cards`
+4. Category: **Integration**
+5. Click **Add**
+6. Find "**Reusable Cards**" and click **Download**
+7. **Restart Home Assistant**
 
-const getViewName = (lovelace) => {
-  const fromURL = getViewFromURL();
-  if (fromURL) return fromURL;
-  
-  const views = lovelace?.config?.views || lovelace?.views;
-  const view = views?.[lovelace?.current_view ?? 0];
-  return view?.path || view?.title?.toLowerCase().replace(/\s+/g, '-') || 'default';
-};
+#### Manual Installation
+1. Copy `custom_components/reusable_cards` to your `/config/custom_components/` directory
+2. Restart Home Assistant
 
-const isEditMode = () => {
-  const lovelace = getLovelace();
-  return lovelace?.editMode === true;
-};
+### Step 2: Install Frontend Card
 
-// Strip visibility conditions from config recursively
-// Handles all nested structures: cards, badges, elements, tabs, etc.
-const stripVisibility = (config) => {
-  // Handle null, undefined, or non-objects
-  if (!config || typeof config !== 'object') return config;
-  
-  // Handle arrays
-  if (Array.isArray(config)) {
-    return config.map(item => stripVisibility(item));
-  }
-  
-  // Create a shallow copy of the object
-  const cleaned = { ...config };
-  
-  // Remove visibility and conditional properties at this level
-  delete cleaned.visibility;
-  delete cleaned.conditions;
-  
-  // Recursively clean all array properties that might contain nested configs
-  // Common properties: cards, badges, elements, tabs, entities, rows, columns, etc.
-  const arrayProperties = [
-    'cards', 'badges', 'elements', 'tabs', 'entities', 
-    'rows', 'columns', 'items', 'sections', 'views'
-  ];
-  
-  for (const prop of arrayProperties) {
-    if (cleaned[prop] && Array.isArray(cleaned[prop])) {
-      cleaned[prop] = cleaned[prop].map(item => stripVisibility(item));
-    }
-  }
-  
-  // Also recursively clean nested objects (for custom structures)
-  for (const key in cleaned) {
-    if (cleaned[key] && typeof cleaned[key] === 'object' && !Array.isArray(cleaned[key])) {
-      // Skip certain keys that shouldn't be recursively processed
-      const skipKeys = ['hass', 'config', 'lovelace', 'stateObj'];
-      if (!skipKeys.includes(key)) {
-        cleaned[key] = stripVisibility(cleaned[key]);
-      }
-    }
-  }
-  
-  return cleaned;
-};
+#### Manual Installation (Required)
+1. Copy `dist/reusable-cards.js` to `/config/www/reusable-cards/`
+2. Add to your Lovelace resources:
 
-const createCardElement = async (config, forceEditMode = false) => {
-  const helpers = await getCardHelpers();
-  
-  // If in edit mode, strip visibility conditions
-  const cleanedConfig = forceEditMode ? stripVisibility(config) : config;
-  
-  let card;
-  if (helpers) {
-    card = helpers.createCardElement(cleanedConfig);
-  } else {
-    const tagName = cleanedConfig.type?.startsWith('custom:') 
-      ? cleanedConfig.type.replace('custom:', '') 
-      : `hui-${cleanedConfig.type}-card`;
-    card = document.createElement(tagName);
-    card.setConfig?.(cleanedConfig);
-  }
-  
-  return card;
-};
+**Via UI:**
+- Go to **Settings** → **Dashboards** → **⋮** (top right) → **Resources**
+- Click **+ Add Resource**
+- URL: `/local/reusable-cards/reusable-cards.js`
+- Type: **JavaScript Module**
 
-const searchShadowDOM = (root, selector, callback) => {
-  if (!root) return;
-  root.querySelectorAll?.(selector)?.forEach(callback);
-  root.querySelectorAll?.('*')?.forEach(el => {
-    if (el.shadowRoot) searchShadowDOM(el.shadowRoot, selector, callback);
-  });
-};
+**Via YAML:**
+```yaml
+resources:
+  - url: /local/reusable-cards/reusable-cards.js
+    type: module
+```
 
-// ============================================================================
-// REUSABLE CARD PARENT
-// ============================================================================
+3. **Refresh your browser** (Ctrl+F5 or Cmd+Shift+R)
 
-class ReusableCardParent extends HTMLElement {
-  static _cleanupScheduled = false;
-  
-  constructor() {
-    super();
-    this.attachShadow({ mode: 'open' });
-    this._config = {};
-    this._hass = null;
-    this._cardElement = null;
-    this._savedConfigHash = null;
-    this._pendingSave = false;
-    this._previousHash = null;
-    this._lastEditMode = null;
-    this._editModeCheckInterval = null;
-  }
+## Usage
 
-  setConfig(config) {
-    if (!config.hash) throw new Error('You must specify a hash');
-    if (config._previousHash) this._previousHash = config._previousHash;
-    this._config = config;
-    config.card ? this.createCard() : this.showPlaceholder();
-  }
+### Creating a Template (Parent Card)
 
-  set hass(hass) {
-    this._hass = hass;
-    
-    // Check if edit mode changed
-    const currentEditMode = isEditMode();
-    if (this._lastEditMode !== currentEditMode) {
-      this._lastEditMode = currentEditMode;
-      // Recreate card to apply/remove edit mode
-      if (this._config.card) {
-        this.createCard();
-      }
-    } else if (this._cardElement) {
-      // Just update hass if edit mode hasn't changed
-      this._cardElement.hass = hass;
-    }
-    
-    if (this._config.hash && this._config.card) {
-      this._pendingSave = true;
-      this._trySave();
-    }
-  }
+Add a **Reusable Card Parent** to your dashboard. This card is **visible** and defines the template.
 
-  connectedCallback() {
-    if (this._pendingSave) requestAnimationFrame(() => this._trySave());
-    if (!ReusableCardParent._cleanupScheduled) {
-      ReusableCardParent._cleanupScheduled = true;
-      setTimeout(() => {
-        this._cleanupOrphanedHashes();
-        ReusableCardParent._cleanupScheduled = false;
-      }, 2000);
-    }
-    
-    // Poll for edit mode changes
-    this._editModeCheckInterval = setInterval(() => {
-      if (this._hass) {
-        const currentEditMode = isEditMode();
-        if (this._lastEditMode !== currentEditMode) {
-          this._lastEditMode = currentEditMode;
-          if (this._config.card) {
-            this.createCard();
-          }
-        }
-      }
-    }, 500);
-  }
+**Via UI:**
+1. Edit your dashboard
+2. Add card → Search "Reusable Card Parent"
+3. Configure the template hash (e.g., `camera`)
+4. Add cards inside the vertical stack
+5. Save
 
-  disconnectedCallback() {
-    if (this._editModeCheckInterval) {
-      clearInterval(this._editModeCheckInterval);
-      this._editModeCheckInterval = null;
-    }
-    
-    // When card is removed from DOM, schedule cleanup to remove orphaned hash
-    if (this._hass && this._config.hash) {
-      setTimeout(() => {
-        this._cleanupOrphanedHashes();
-      }, 1000);
-    }
-  }
+**Via YAML:**
+```yaml
+type: custom:reusable-card-parent
+hash: "#camera.livingroom"
+show_watermark: true
+card:
+  type: vertical-stack
+  cards:
+    - type: picture-entity
+      entity: camera.front_door
+    - type: button
+      entity: light.porch
+```
 
-  _trySave() {
-    if (!this._pendingSave || !this.isConnected || !this.parentElement || this._isPreview()) return;
-    this._pendingSave = false;
-    this._saveToStorage();
-  }
+### Using a Template (Child Card)
 
-  _isPreview() {
-    const ha = document.querySelector('home-assistant');
-    const dialog = ha?.shadowRoot?.querySelector('hui-dialog-edit-card, hui-dialog-create-card');
-    if (dialog?.shadowRoot?.querySelector('ha-dialog[open]')) return true;
-    
-    let node = this.parentElement;
-    while (node) {
-      const tag = node.tagName?.toLowerCase();
-      if (tag === 'hui-dialog-edit-card' || tag === 'hui-dialog-create-card') return true;
-      if (tag === 'home-assistant-main') return false;
-      node = node.parentElement;
-    }
-    return false;
-  }
+Add a **Reusable Card Child** anywhere you want to display the template.
 
-  async _saveToStorage() {
-    if (!this._hass || !this._config.hash || !this._config.card) return;
-    
-    const configHash = JSON.stringify({ hash: this._config.hash, card: this._config.card });
-    if (configHash === this._savedConfigHash) return;
+**Via UI:**
+1. Edit your dashboard
+2. Add card → Search "Reusable Card Child"
+3. Select the template from dropdown
+4. Save
 
-    try {
-      if (this._previousHash && this._previousHash !== this._config.hash) {
-        await this._hass.callService('reusable_cards', 'delete_card', { hash: this._previousHash });
-        this._previousHash = null;
-      }
-      await this._hass.callService('reusable_cards', 'save_card', {
-        hash: this._config.hash,
-        config: this._config.card
-      });
-      this._savedConfigHash = configHash;
-      await this._cleanupOrphanedHashes();
-    } catch (e) { console.error('[ReusableCards] Save error:', e); }
-  }
+**Via YAML:**
+```yaml
+type: custom:reusable-card-child
+hash: "#camera.livingroom"
+show_watermark: true
+```
 
-  async _cleanupOrphanedHashes() {
-    if (!this._hass) return setTimeout(() => this._cleanupOrphanedHashes(), 500);
-    
-    // Don't cleanup if dashboard is in YAML edit mode - cards are temporarily removed from DOM
-    const ha = document.querySelector('home-assistant');
-    const lovelacePanel = ha?.shadowRoot?.querySelector('home-assistant-main')?.shadowRoot?.querySelector('ha-panel-lovelace');
-    const editDialog = lovelacePanel?.shadowRoot?.querySelector('hui-dialog-edit-view');
-    if (editDialog?.shadowRoot?.querySelector('ha-dialog[open]')) {
-      console.log('[ReusableCards] Skipping cleanup - YAML edit mode active');
-      return;
-    }
-    
-    const currentView = getViewFromURL();
-    if (!currentView) return;
-    
-    const sensor = this._hass.states['sensor.reusable_cards'];
-    const storedHashes = sensor?.attributes?.hashes || [];
-    const viewSuffix = `.${currentView}`;
-    const hashesForView = storedHashes.filter(h => h.endsWith(viewSuffix));
-    if (!hashesForView.length) return;
-    
-    const activeHashes = new Set();
-    searchShadowDOM(document, 'reusable-card-parent', el => {
-      if (el._config?.hash) activeHashes.add(el._config.hash);
-    });
-    
-    const orphanedHashes = hashesForView.filter(h => !activeHashes.has(h));
-    
-    // Safety check: If we're about to delete ALL hashes for this view, something is probably wrong
-    // This prevents accidental deletion when cards are temporarily removed (YAML mode, etc.)
-    if (orphanedHashes.length > 0 && orphanedHashes.length === hashesForView.length && hashesForView.length > 1) {
-      console.warn('[ReusableCards] Refusing to delete ALL hashes - this might be YAML edit mode or a bug');
-      return;
-    }
-    
-    if (orphanedHashes.length > 0) {
-      console.log('[ReusableCards] Found orphaned hashes:', orphanedHashes);
-      for (const hash of orphanedHashes) {
-        try { await this._hass.callService('reusable_cards', 'delete_card', { hash }); } catch {}
-      }
-    }
-  }
+## How It Works
 
-  async createCard() {
-    if (!this._config.card) return;
-    try {
-      const editMode = isEditMode();
-      this._cardElement = await createCardElement(this._config.card, editMode);
-      if (this._hass) {
-        this._cardElement.hass = this._hass;
-      }
-      
-      const showWatermark = this._config.show_watermark !== false;
-      this.shadowRoot.innerHTML = `
-        <style>${CARD_WRAPPER_STYLE}${WATERMARK_STYLE}</style>
-        <div class="card-wrapper"></div>
-        ${showWatermark ? `<span class="hash-overlay" data-hash="${this._config.hash}" title="${this._config.hash}">p</span>` : ''}
-      `;
-      this.shadowRoot.querySelector('.card-wrapper').appendChild(this._cardElement);
-    } catch (e) { this.showError(e.message); }
-  }
+### Hash Naming Convention
 
-  showError(msg) {
-    this.shadowRoot.innerHTML = `<ha-card><div style="background:var(--error-color);color:white;padding:16px;border-radius:4px"><strong>Error</strong><br>${msg}</div></ha-card>`;
-  }
+Hashes follow the format: `#<n>.<view>`
 
-  showPlaceholder() {
-    this.shadowRoot.innerHTML = `<ha-card><div style="padding:16px;text-align:center;color:var(--secondary-text-color)">Select a card type in the editor.</div></ha-card>`;
-  }
+- `#camera.livingroom` - Camera template on "livingroom" view
+- `#sensors.dashboard` - Sensors template on "dashboard" view  
+- `#lights.kitchen` - Lights template on "kitchen" view
 
-  getCardSize() { return this._cardElement?.getCardSize?.() || 3; }
-  static getConfigElement() { return document.createElement('reusable-card-parent-editor'); }
-  static getStubConfig() { return { type: 'custom:reusable-card-parent', hash: '#my-card' }; }
-}
+The view name is **automatically appended** when you create a new parent card. This helps you **locate where the parent template lives** - if you need to edit `#camera.livingroom`, you know to look on the "livingroom" view/dashboard.
 
-// ============================================================================
-// REUSABLE CARD PARENT EDITOR
-// ============================================================================
+### Storage
 
-class ReusableCardParentEditor extends HTMLElement {
-  constructor() {
-    super();
-    this.attachShadow({ mode: 'open' });
-    this._config = {};
-    this._hass = null;
-    this._lovelace = null;
-    this._initialHash = null;
-  }
+Templates are stored in:
+```
+/config/reusable-cards-templates/
+├── reusable_cards.yaml       # Your templates
+└── reusable_cards.yaml.bak   # Automatic backup
+```
 
-  setConfig(config) {
-    if (this._initialHash === null && config.hash) this._initialHash = config.hash;
-    this._config = { ...config };
-    
-    // If it's a brand new card, default it to a stack to force the editor to load
-    if (!this._config.card) {
-      this._config.card = { type: "vertical-stack", cards: [] };
-    }
-    
-    // If no hash exists, generate default with view name
-    if (!this._config.hash) {
-      const currentView = getViewName(this.lovelace);
-      this._config.hash = `#my-card.${currentView}`;
-      this._configChanged(this._config);
-    }
-    
-    this._render();
-  }
+Example `reusable_cards.yaml`:
+```yaml
+'#camera.livingroom':
+  type: vertical-stack
+  cards:
+  - entity: camera.front_door
+    type: picture-entity
+  - entity: light.porch
+    type: button
 
-  set hass(hass) {
-    this._hass = hass;
-    this.shadowRoot?.querySelectorAll('hui-card-element-editor, hui-card-picker')?.forEach(el => el.hass = hass);
-    if (!this.shadowRoot?.hasChildNodes()) this._render();
-  }
+'#sensors.dashboard':
+  type: entities
+  entities:
+  - sensor.temperature
+  - sensor.humidity
+```
 
-  set lovelace(l) { this._lovelace = l; }
-  get lovelace() { return this._lovelace || getLovelace(); }
+### Sensor
 
-  _configChanged(config) {
-    config.type = 'custom:reusable-card-parent';
-    if (this._initialHash && this._initialHash !== config.hash) config._previousHash = this._initialHash;
-    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config }, bubbles: true, composed: true }));
-  }
+The integration creates a `sensor.reusable_cards` entity that exposes:
+- `cards`: All template configurations
+- `hashes`: List of all template hashes
+- `storage_type`: "yaml"
+- `storage_location`: Path to storage file
+- `total_size_bytes`: Size of all templates
 
-  async _render() {
-    if (!this._hass) return;
-    
-    const hasCard = this._config.card?.type;
-    const currentView = getViewName(this.lovelace);
-    let hashName = (this._config.hash || '').replace(/^#/, '');
-    const dotIdx = hashName.lastIndexOf('.');
-    if (dotIdx > 0) hashName = hashName.substring(0, dotIdx);
+## Advanced Features
 
-    this.shadowRoot.innerHTML = `
-      <style>
-        ${EDITOR_BASE_STYLE}
-        .hash-input-wrapper {
-          display: flex;
-          align-items: center;
-          border: 1px solid var(--divider-color);
-          border-radius: var(--ha-card-border-radius, 8px);
-          background: var(--card-background-color, var(--ha-card-background));
-          overflow: hidden;
-        }
-        .hash-input-wrapper:focus-within { border-color: var(--primary-color); }
-        .hash-prefix, .hash-suffix {
-          padding: 12px 8px;
-          color: var(--secondary-text-color);
-          font-size: 14px;
-          font-family: monospace;
-          background: var(--secondary-background-color);
-          user-select: none;
-        }
-        .hash-prefix { padding-right: 4px; }
-        .hash-suffix { padding-left: 4px; }
-        .hash-input-wrapper input {
-          flex: 1;
-          padding: 12px 4px;
-          border: none;
-          background: transparent;
-          color: var(--primary-text-color);
-          font-size: 14px;
-          font-family: monospace;
-          min-width: 80px;
-        }
-        .hash-input-wrapper input:focus { outline: none; }
-        .card-section {
-          border: 1px solid var(--divider-color);
-          border-radius: var(--ha-card-border-radius, 12px);
-          overflow: hidden;
-        }
-        .card-section-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px 16px;
-          background: var(--secondary-background-color);
-          border-bottom: 1px solid var(--divider-color);
-        }
-        .card-section-header h3 { margin: 0; font-size: 14px; font-weight: 500; }
-        .card-section-content { padding: 16px; min-height: 100px; }
-      </style>
-      <div class="container">
-        <div class="info-box">
-          <strong>Reusable Card Parent</strong>
-          <p>Define a card template that can be reused with child cards.</p>
-        </div>
-        <div class="form-row">
-          <label>Template Hash</label>
-          <div class="hash-input-wrapper">
-            <span class="hash-prefix">#</span>
-            <input type="text" id="hash-input" value="${hashName}" placeholder="my-card"/>
-            <span class="hash-suffix">.${currentView}</span>
-          </div>
-          <div class="helper-text">Full hash: <code>#${hashName || 'my-card'}.${currentView}</code></div>
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="watermark-cb" ${this._config.show_watermark !== false ? 'checked' : ''}/>
-          <label for="watermark-cb">Show watermark</label>
-        </div>
-        <div class="card-section">
-          <div class="card-section-header">
-            <h3>Card Configuration</h3>
-            ${hasCard ? `<div style="font-size: 12px; color: var(--secondary-text-color); font-style: italic;">
-              Note: Leave "Title" field below empty
-            </div>` : ''}
-          </div>
-          <div class="card-section-content" id="editor-container"></div>
-        </div>
-      </div>
-    `;
+### Visibility Conditions
 
-    const $ = id => this.shadowRoot.getElementById(id);
-    $('hash-input')?.addEventListener('change', e => {
-      let name = e.target.value.trim().replace(/^#/, '').split('.')[0];
-      this._config = { ...this._config, hash: name ? `#${name}.${currentView}` : '' };
-      this._configChanged(this._config);
-    });
-    $('watermark-cb')?.addEventListener('change', e => {
-      this._config = { ...this._config, show_watermark: e.target.checked };
-      this._configChanged(this._config);
-    });
+Templates **respect visibility conditions** in normal view mode and **ignore them** in edit mode (just like native HA cards).
 
-    await this._renderCardEditor();
-  }
+```yaml
+type: custom:reusable-card-parent
+hash: "#conditional.livingroom"
+card:
+  type: vertical-stack
+  cards:
+    - type: button
+      entity: light.living_room
+      visibility:
+        - condition: state
+          entity: sun.sun
+          state: below_horizon
+```
 
-  async _renderCardEditor() {
-    const container = this.shadowRoot.getElementById('editor-container');
-    if (!container || !this._hass) return;
-    
-    // Show loading while we verify element registration
-    container.innerHTML = '<div style="display:flex; justify-content:center; padding:20px;"><ha-circular-progress active size="small"></ha-circular-progress></div>';
+### Nested Structures
 
-    if (this._config.card?.type && this._config.card.type !== "") {
-      await this._loadElement('hui-card-element-editor');
-      const editor = document.createElement('hui-card-element-editor');
-      editor.hass = this._hass;
-      editor.lovelace = this.lovelace;
-      editor.value = this._config.card;
-      editor.addEventListener('config-changed', e => {
-        e.stopPropagation();
-        this._config = { ...this._config, card: e.detail.config };
-        this._configChanged(this._config);
-      });
-      container.innerHTML = '';
-      container.appendChild(editor);
-    } else {
-      await this._loadElement('hui-card-picker');
-      if (customElements.get('hui-card-picker')) {
-        const picker = document.createElement('hui-card-picker');
-        picker.hass = this._hass;
-        picker.lovelace = this.lovelace;
-        picker.addEventListener('config-changed', e => {
-          e.stopPropagation();
-          this._config = { ...this._config, card: e.detail.config };
-          this._configChanged(this._config);
-        });
-        container.innerHTML = '';
-        container.appendChild(picker);
-      } else {
-        container.innerHTML = `<div style="padding:16px;text-align:center;color:var(--secondary-text-color)">
-          <p>Card picker could not be loaded.</p>
-          <p style="font-size:12px">Try refreshing the page or add the card configuration manually via YAML.</p>
-        </div>`;
-      }
-    }
-  }
+The integration handles deeply nested visibility conditions:
+```yaml
+card:
+  type: vertical-stack
+  cards:
+    - type: custom:badge-horizontal-container-card
+      badges:
+        - type: custom:hui-entity-badge
+          entity: sensor.temperature
+          visibility:
+            - condition: numeric_state
+              entity: sensor.temperature
+              above: 75
+```
 
-  async _loadElement(tag) {
-    if (customElements.get(tag)) return;
-    
-    // Try to trigger HA's internal lazy-loader for dashboard elements
-    try {
-      const helpers = await getCardHelpers();
-      if (helpers) {
-        // Creating a generic element often triggers the registry to populate
-        helpers.createCardElement({ type: 'button', entity: '' });
-      }
-    } catch (e) {}
-    
-    // Poll for registration with a longer timeout (5s)
-    const end = Date.now() + 5000;
-    while (!customElements.get(tag) && Date.now() < end) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-  }
-}
+### Watermark
 
-// ============================================================================
-// REUSABLE CARD CHILD
-// ============================================================================
+Each card shows a small watermark indicator:
+- **p** = Parent card (defines template)
+- **c** = Child card (references template)
 
-class ReusableCardChild extends HTMLElement {
-  constructor() {
-    super();
-    this.attachShadow({ mode: 'open' });
-    this._config = {};
-    this._hass = null;
-    this._cardElement = null;
-    this._lastCardConfig = null;
-    this._lastEditMode = null;
-    this._editModeCheckInterval = null;
-  }
+Hover over the watermark to see the full hash. Disable with:
+```yaml
+show_watermark: false
+```
 
-  setConfig(config) {
-    if (!config.hash) throw new Error('You must specify a hash');
-    this._config = config;
-    this._lastCardConfig = null;
-    this.createCard();
-  }
+## Services
 
-  set hass(hass) {
-    this._hass = hass;
-    
-    // Check if edit mode changed
-    const currentEditMode = isEditMode();
-    const editModeChanged = this._lastEditMode !== currentEditMode;
-    if (editModeChanged) {
-      this._lastEditMode = currentEditMode;
-    }
-    
-    const cards = hass.states['sensor.reusable_cards']?.attributes?.cards || {};
-    const configJson = JSON.stringify(cards[this._config.hash]);
-    
-    // Recreate card if config changed OR edit mode changed
-    if (configJson !== this._lastCardConfig || editModeChanged) {
-      this.createCard();
-    } else if (this._cardElement) {
-      this._cardElement.hass = hass;
-    }
-  }
+### `reusable_cards.save_card`
 
-  connectedCallback() {
-    // Poll for edit mode changes
-    this._editModeCheckInterval = setInterval(() => {
-      if (this._hass) {
-        const currentEditMode = isEditMode();
-        if (this._lastEditMode !== currentEditMode) {
-          this._lastEditMode = currentEditMode;
-          this.createCard();
-        }
-      }
-    }, 500);
-  }
+Save a template programmatically.
 
-  disconnectedCallback() {
-    if (this._editModeCheckInterval) {
-      clearInterval(this._editModeCheckInterval);
-      this._editModeCheckInterval = null;
-    }
-  }
+```yaml
+service: reusable_cards.save_card
+data:
+  hash: "#my-card.livingroom"
+  config:
+    type: entities
+    entities:
+      - light.living_room
+```
 
-  async createCard() {
-    if (!this._hass || !this._config.hash) return;
-    
-    const sensor = this._hass.states['sensor.reusable_cards'];
-    if (!sensor?.attributes?.cards) {
-      return this.showError('Reusable Cards integration not found.');
-    }
-    
-    const cardConfig = sensor.attributes.cards[this._config.hash];
-    if (!cardConfig) {
-      this._lastCardConfig = null;
-      return this.showError(`Template "${this._config.hash}" not found.`);
-    }
+### `reusable_cards.delete_card`
 
-    const configJson = JSON.stringify(cardConfig);
-    const editMode = isEditMode();
-    
-    // Only skip recreation if config AND edit mode are both unchanged
-    if (configJson === this._lastCardConfig && this._lastEditMode === editMode && this._cardElement) {
-      return;
-    }
+Delete a template.
 
-    try {
-      this._cardElement = await createCardElement(cardConfig, editMode);
-      this._cardElement.hass = this._hass;
-      this._lastCardConfig = configJson;
-      this._lastEditMode = editMode;
-      
-      const showWatermark = this._config.show_watermark !== false;
-      this.shadowRoot.innerHTML = `
-        <style>${CARD_WRAPPER_STYLE}${WATERMARK_STYLE}</style>
-        <div class="card-wrapper"></div>
-        ${showWatermark ? `<span class="hash-overlay" data-hash="${this._config.hash}" title="${this._config.hash}">c</span>` : ''}
-      `;
-      this.shadowRoot.querySelector('.card-wrapper').appendChild(this._cardElement);
-    } catch (e) { this.showError(e.message); }
-  }
+```yaml
+service: reusable_cards.delete_card
+data:
+  hash: "#my-card.livingroom"
+```
 
-  showError(msg) {
-    this.shadowRoot.innerHTML = `<ha-card><div style="background:var(--error-color);color:white;padding:16px;border-radius:4px"><strong>Error</strong><br>${msg}</div></ha-card>`;
-  }
+## Tips & Best Practices
 
-  getCardSize() { return this._cardElement?.getCardSize?.() || 3; }
-  static getConfigElement() { return document.createElement('reusable-card-child-editor'); }
-  static getStubConfig() { return { type: 'custom:reusable-card-child', hash: '#my-card' }; }
-}
+### Naming Templates
 
-// ============================================================================
-// REUSABLE CARD CHILD EDITOR
-// ============================================================================
+- Use descriptive names: `#camera-grid.frontdoor` instead of `#card1`
+- Keep view names consistent with your dashboard paths
+- Use lowercase with hyphens for readability
 
-class ReusableCardChildEditor extends HTMLElement {
-  constructor() {
-    super();
-    this.attachShadow({ mode: 'open' });
-    this._config = {};
-    this._hass = null;
-    this._lastHashes = '';
-  }
+### Organizing Templates
 
-  setConfig(config) { this._config = config; this._render(); }
+- Create parent cards in a dedicated "Templates" dashboard view
+- Use child cards throughout your other views
+- Keep templates view-specific when possible for easier management
 
-  set hass(hass) {
-    const newHashes = Object.keys(hass?.states['sensor.reusable_cards']?.attributes?.cards || {}).join(',');
-    if (this._lastHashes !== newHashes || !this.shadowRoot?.hasChildNodes()) {
-      this._hass = hass;
-      this._lastHashes = newHashes;
-      this._render();
-    } else {
-      this._hass = hass;
-    }
-  }
+### Editing Templates
 
-  _configChanged(config) {
-    config.type = 'custom:reusable-card-child';
-    this.dispatchEvent(new CustomEvent('config-changed', { detail: { config }, bubbles: true, composed: true }));
-  }
+1. Edit the **parent card** - changes apply to all children automatically
+2. **Note**: Leave the "Title" field empty in vertical stacks (it's for internal use)
+3. Templates update in real-time across all views
+4. **Important**: After creating or editing a parent card, refresh your browser (F5) if the template doesn't appear in the child card dropdown menu
 
-  _render() {
-    if (!this._hass) return;
-    
-    const cards = this._hass.states['sensor.reusable_cards']?.attributes?.cards || {};
-    const hashes = Object.keys(cards);
-    const currentHash = this._config.hash || '';
-    
-    const groups = {};
-    hashes.forEach(hash => {
-      const dotIdx = hash.lastIndexOf('.');
-      const view = dotIdx > 0 ? hash.substring(dotIdx + 1) : '_global';
-      const name = dotIdx > 0 ? hash.substring(0, dotIdx) : hash;
-      (groups[view] = groups[view] || []).push({ hash, name });
-    });
-    const sortedViews = Object.keys(groups).sort((a, b) => a === '_global' ? -1 : b === '_global' ? 1 : a.localeCompare(b));
+### Parent Card Uses Vertical Stack
 
-    this.shadowRoot.innerHTML = `
-      <style>
-        ${EDITOR_BASE_STYLE}
-        .form-row select {
-          width: 100%;
-          padding: 12px;
-          border: 1px solid var(--divider-color);
-          border-radius: var(--ha-card-border-radius, 8px);
-          background: var(--card-background-color, var(--ha-card-background));
-          color: var(--primary-text-color);
-          font-size: 14px;
-          cursor: pointer;
-        }
-        .form-row select:focus { outline: none; border-color: var(--primary-color); }
-        .warning-box {
-          background: var(--warning-color);
-          color: var(--primary-text-color);
-          padding: 16px;
-          border-radius: var(--ha-card-border-radius, 12px);
-          text-align: center;
-        }
-      </style>
-      <div class="container">
-        <div class="info-box">
-          <strong>Reusable Card Child</strong>
-          <p>Display a card template defined with a parent card.</p>
-        </div>
-        ${hashes.length ? `
-          <div class="form-row">
-            <label>Select Card Template</label>
-            <select id="hash-select">
-              <option value="" ${!currentHash ? 'selected' : ''}>-- Select a template --</option>
-              ${sortedViews.map(view => `
-                <optgroup label="${view === '_global' ? 'Global' : 'View: ' + view}">
-                  ${groups[view].map(item => `<option value="${item.hash}" ${currentHash === item.hash ? 'selected' : ''}>${item.name}</option>`).join('')}
-                </optgroup>
-              `).join('')}
-            </select>
-          </div>
-          <div class="checkbox-row">
-            <input type="checkbox" id="watermark-cb" ${this._config.show_watermark !== false ? 'checked' : ''}/>
-            <label for="watermark-cb">Show watermark</label>
-          </div>
-        ` : `<div class="warning-box"><strong>No templates found</strong><br>Create a reusable-card-parent first.</div>`}
-      </div>
-    `;
+The parent card uses a `vertical-stack` by default to ensure the card picker works reliably in GUI mode. While technically optional, this prevents the card picker from disappearing in certain scenarios. You can still configure any card type inside the vertical stack.
 
-    this.shadowRoot.getElementById('hash-select')?.addEventListener('change', e => {
-      this._config = { ...this._config, hash: e.target.value };
-      this._configChanged(this._config);
-    });
-    this.shadowRoot.getElementById('watermark-cb')?.addEventListener('change', e => {
-      this._config = { ...this._config, show_watermark: e.target.checked };
-      this._configChanged(this._config);
-    });
-  }
-}
+### YAML Edit Mode
 
-// Register components
-customElements.define('reusable-card-parent', ReusableCardParent);
-customElements.define('reusable-card-parent-editor', ReusableCardParentEditor);
-customElements.define('reusable-card-child', ReusableCardChild);
-customElements.define('reusable-card-child-editor', ReusableCardChildEditor);
+The integration automatically detects YAML edit mode and prevents accidental template deletion. You can safely use raw configuration editor without breaking templates.
 
-window.customCards = window.customCards || [];
-window.customCards.push(
-  { type: 'reusable-card-parent', name: 'Reusable Card Parent', description: 'Define a reusable card template', preview: true },
-  { type: 'reusable-card-child', name: 'Reusable Card Child', description: 'Display a saved card template', preview: false }
-);
+### Backup & Version Control
 
-console.info(`%c REUSABLE-CARDS %c v${CARD_VERSION} `, 'color:white;background:#3498db;font-weight:bold', 'color:#3498db;background:white;font-weight:bold');
+- Templates are stored in human-readable YAML
+- Automatic `.bak` files created on each save
+- Add `/config/reusable-cards-templates/` to git for version control
+- Exclude `.bak` files in `.gitignore`
+
+## Troubleshooting
+
+### Templates Not Showing Up
+
+1. Check `sensor.reusable_cards` exists
+2. Verify templates are in `/config/reusable-cards-templates/reusable_cards.yaml`
+3. **Refresh your browser (F5)** - newly created templates may not appear in the child card dropdown until refresh
+4. Hard refresh if needed (Ctrl+F5 or Cmd+Shift+R)
+
+### Child Card Shows Error
+
+- **"Template not found"**: The parent card doesn't exist or has a different hash
+- **"Integration not found"**: Backend integration not loaded - restart HA
+
+### Changes Not Applying
+
+1. Make sure you're editing the **parent card**, not a child
+2. Check browser console for errors (F12)
+3. Verify the hash matches exactly between parent and children
+
+### YAML Mode Clears Templates
+
+This was a bug in earlier versions (< 1.4.1). Update to the latest version - it includes protections against this issue.
+
+## Version History
+
+- **1.4.1**: YAML file storage, improved edit mode detection, nested visibility support
+- **1.3.2**: Edit mode visibility handling
+- **1.2.0**: Watermark tooltips, view-scoped templates
+- **1.1.0**: Initial release
+
+## Contributing
+
+Contributions welcome! Please open an issue or PR on GitHub.
+
+## License
+
+MIT License - see LICENSE file for details
+
+## Support
+
+- 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/reusable-cards/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/yourusername/reusable-cards/discussions)
+- 📖 **Wiki**: [GitHub Wiki](https://github.com/yourusername/reusable-cards/wiki)
