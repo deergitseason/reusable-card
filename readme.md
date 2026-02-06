@@ -2,6 +2,8 @@
 
 Define a card once, use it everywhere. Create reusable card templates that can be referenced across multiple dashboards and views.
 
+*(Full immediate disclosure: entirely vibecoded. Contributors welcome)*
+
 ## What Makes This Different?
 
 ### vs. Decluttering Card / Streamline Card
@@ -32,8 +34,10 @@ Define a card once, use it everywhere. Create reusable card templates that can b
 - 💾 **Auto-Backup**: Automatic `.bak` file creation on each save
 - 🚫 **No Size Limits**: Store hundreds of templates without sensor attribute limits
 
-<img width="775" height="414" alt="Screenshot 2026-02-06 at 1 31 31 PM" src="https://github.com/user-attachments/assets/3c449d86-8a66-46d7-aff5-ef8ac160b14d" />
 <img width="756" height="951" alt="Screenshot 2026-02-06 at 1 31 02 PM" src="https://github.com/user-attachments/assets/2f9ade71-5c4f-400c-bc23-68928d3a9905" />
+
+<img width="775" height="414" alt="Screenshot 2026-02-06 at 1 31 31 PM" src="https://github.com/user-attachments/assets/3c449d86-8a66-46d7-aff5-ef8ac160b14d" />
+
 
 ## Use Cases
 
