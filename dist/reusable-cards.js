@@ -8,7 +8,7 @@ Define a card once, use it everywhere. Create reusable card templates that can b
 - 🔄 **Reusable Templates**: Define once, use anywhere
 - 📁 **YAML Storage**: Templates stored in `/config/reusable-cards-templates/reusable_cards.yaml`
 - 👁️ **Smart Visibility**: Automatically handles visibility conditions in edit mode
-- 🏷️ **View-Scoped**: Templates can be specific to dashboard views
+- 🏷️ **View-Scoped**: Templates tagged with the dashboard view they're located in (so you can find them easily!)
 - 💾 **Auto-Backup**: Automatic `.bak` file creation on each save
 - 🚫 **No Size Limits**: Store hundreds of templates without sensor attribute limits
 
