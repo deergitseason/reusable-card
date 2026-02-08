@@ -1,5 +1,5 @@
-// Reusable Cards for Home Assistant
-const CARD_VERSION = '1.4.1';
+// Reusable Cards for Home Assistant - Performance Optimized
+const CARD_VERSION = '1.4.2';
 
 // Shared styles
 const WATERMARK_STYLE = `
@@ -96,31 +96,152 @@ const getViewName = (lovelace) => {
   return view?.path || view?.title?.toLowerCase().replace(/\s+/g, '-') || 'default';
 };
 
-const isEditMode = () => {
-  const lovelace = getLovelace();
-  return lovelace?.editMode === true;
+// ============================================================================
+// GLOBAL EDIT MODE TRACKER - Event-driven instead of polling
+// ============================================================================
+
+const EditModeTracker = {
+  _isEditMode: false,
+  _listeners: new Set(),
+  _observer: null,
+  _checkInterval: null,
+  
+  init() {
+    if (this._observer) return;
+    
+    // Initial check
+    this._isEditMode = this._checkEditMode();
+    
+    // Use MutationObserver to watch for edit mode changes
+    this._observer = new MutationObserver(() => {
+      const newEditMode = this._checkEditMode();
+      if (newEditMode !== this._isEditMode) {
+        this._isEditMode = newEditMode;
+        this._notifyListeners();
+      }
+    });
+    
+    // Observe the lovelace panel for attribute changes
+    const observeLovelace = () => {
+      const lovelacePanel = document.querySelector('home-assistant')
+        ?.shadowRoot?.querySelector('home-assistant-main')
+        ?.shadowRoot?.querySelector('ha-panel-lovelace');
+      
+      if (lovelacePanel) {
+        this._observer.observe(lovelacePanel, { 
+          attributes: true, 
+          subtree: true, 
+          childList: true
+        });
+        return true;
+      }
+      return false;
+    };
+    
+    // Try to observe, with fallback polling only if needed
+    if (!observeLovelace()) {
+      // Fallback: check periodically only until we can attach observer
+      let attempts = 0;
+      this._checkInterval = setInterval(() => {
+        if (observeLovelace() || attempts++ > 20) {
+          clearInterval(this._checkInterval);
+          this._checkInterval = null;
+        }
+      }, 500);
+    }
+  },
+  
+  _checkEditMode() {
+    const lovelace = getLovelace();
+    return lovelace?.editMode === true;
+  },
+  
+  _notifyListeners() {
+    this._listeners.forEach(fn => {
+      try {
+        fn(this._isEditMode);
+      } catch (e) {
+        console.error('[ReusableCards] Error in edit mode listener:', e);
+      }
+    });
+  },
+  
+  subscribe(callback) {
+    this._listeners.add(callback);
+    // Immediately call with current state
+    callback(this._isEditMode);
+    // Return unsubscribe function
+    return () => this._listeners.delete(callback);
+  },
+  
+  isEditMode() {
+    return this._isEditMode;
+  },
+  
+  cleanup() {
+    if (this._observer) {
+      this._observer.disconnect();
+      this._observer = null;
+    }
+    if (this._checkInterval) {
+      clearInterval(this._checkInterval);
+      this._checkInterval = null;
+    }
+    this._listeners.clear();
+  }
+};
+
+const isEditMode = () => EditModeTracker.isEditMode();
+
+// Initialize on load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => EditModeTracker.init());
+} else {
+  EditModeTracker.init();
+}
+
+// ============================================================================
+// ACTIVE CARD REGISTRY - Track instances without shadow DOM searches
+// ============================================================================
+
+const ActiveCardRegistry = {
+  _parentCards: new Map(), // hash -> Set of card instances
+  
+  registerParent(hash, card) {
+    if (!this._parentCards.has(hash)) {
+      this._parentCards.set(hash, new Set());
+    }
+    this._parentCards.get(hash).add(card);
+  },
+  
+  unregisterParent(hash, card) {
+    const cards = this._parentCards.get(hash);
+    if (cards) {
+      cards.delete(card);
+      if (cards.size === 0) {
+        this._parentCards.delete(hash);
+      }
+    }
+  },
+  
+  getActiveHashes() {
+    return Array.from(this._parentCards.keys());
+  },
+  
+  hasActiveCard(hash) {
+    return this._parentCards.has(hash) && this._parentCards.get(hash).size > 0;
+  }
 };
 
 // Strip visibility conditions from config recursively
-// Handles all nested structures: cards, badges, elements, tabs, etc.
 const stripVisibility = (config) => {
-  // Handle null, undefined, or non-objects
   if (!config || typeof config !== 'object') return config;
+  if (Array.isArray(config)) return config.map(item => stripVisibility(item));
   
-  // Handle arrays
-  if (Array.isArray(config)) {
-    return config.map(item => stripVisibility(item));
-  }
-  
-  // Create a shallow copy of the object
   const cleaned = { ...config };
-  
-  // Remove visibility and conditional properties at this level
   delete cleaned.visibility;
   delete cleaned.conditions;
   
-  // Recursively clean all array properties that might contain nested configs
-  // Common properties: cards, badges, elements, tabs, entities, rows, columns, etc.
   const arrayProperties = [
     'cards', 'badges', 'elements', 'tabs', 'entities', 
     'rows', 'columns', 'items', 'sections', 'views'
@@ -132,10 +253,8 @@ const stripVisibility = (config) => {
     }
   }
   
-  // Also recursively clean nested objects (for custom structures)
   for (const key in cleaned) {
     if (cleaned[key] && typeof cleaned[key] === 'object' && !Array.isArray(cleaned[key])) {
-      // Skip certain keys that shouldn't be recursively processed
       const skipKeys = ['hass', 'config', 'lovelace', 'stateObj'];
       if (!skipKeys.includes(key)) {
         cleaned[key] = stripVisibility(cleaned[key]);
@@ -148,8 +267,6 @@ const stripVisibility = (config) => {
 
 const createCardElement = async (config, forceEditMode = false) => {
   const helpers = await getCardHelpers();
-  
-  // If in edit mode, strip visibility conditions
   const cleanedConfig = forceEditMode ? stripVisibility(config) : config;
   
   let card;
@@ -164,14 +281,6 @@ const createCardElement = async (config, forceEditMode = false) => {
   }
   
   return card;
-};
-
-const searchShadowDOM = (root, selector, callback) => {
-  if (!root) return;
-  root.querySelectorAll?.(selector)?.forEach(callback);
-  root.querySelectorAll?.('*')?.forEach(el => {
-    if (el.shadowRoot) searchShadowDOM(el.shadowRoot, selector, callback);
-  });
 };
 
 // ============================================================================
@@ -191,7 +300,7 @@ class ReusableCardParent extends HTMLElement {
     this._pendingSave = false;
     this._previousHash = null;
     this._lastEditMode = null;
-    this._editModeCheckInterval = null;
+    this._editModeUnsubscribe = null;
   }
 
   setConfig(config) {
@@ -204,19 +313,12 @@ class ReusableCardParent extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     
-    // Check if edit mode changed
-    const currentEditMode = isEditMode();
-    if (this._lastEditMode !== currentEditMode) {
-      this._lastEditMode = currentEditMode;
-      // Recreate card to apply/remove edit mode
-      if (this._config.card) {
-        this.createCard();
-      }
-    } else if (this._cardElement) {
-      // Just update hass if edit mode hasn't changed
+    // Update card's hass
+    if (this._cardElement) {
       this._cardElement.hass = hass;
     }
     
+    // Save if needed
     if (this._config.hash && this._config.card) {
       this._pendingSave = true;
       this._trySave();
@@ -224,7 +326,26 @@ class ReusableCardParent extends HTMLElement {
   }
 
   connectedCallback() {
-    if (this._pendingSave) requestAnimationFrame(() => this._trySave());
+    // Register in active registry
+    if (this._config.hash) {
+      ActiveCardRegistry.registerParent(this._config.hash, this);
+    }
+    
+    // Subscribe to edit mode changes (event-driven)
+    this._editModeUnsubscribe = EditModeTracker.subscribe((isEdit) => {
+      if (this._lastEditMode !== isEdit) {
+        this._lastEditMode = isEdit;
+        if (this._config.card) {
+          this.createCard();
+        }
+      }
+    });
+    
+    if (this._pendingSave) {
+      requestAnimationFrame(() => this._trySave());
+    }
+    
+    // Schedule cleanup (debounced)
     if (!ReusableCardParent._cleanupScheduled) {
       ReusableCardParent._cleanupScheduled = true;
       setTimeout(() => {
@@ -232,28 +353,21 @@ class ReusableCardParent extends HTMLElement {
         ReusableCardParent._cleanupScheduled = false;
       }, 2000);
     }
-    
-    // Poll for edit mode changes
-    this._editModeCheckInterval = setInterval(() => {
-      if (this._hass) {
-        const currentEditMode = isEditMode();
-        if (this._lastEditMode !== currentEditMode) {
-          this._lastEditMode = currentEditMode;
-          if (this._config.card) {
-            this.createCard();
-          }
-        }
-      }
-    }, 500);
   }
 
   disconnectedCallback() {
-    if (this._editModeCheckInterval) {
-      clearInterval(this._editModeCheckInterval);
-      this._editModeCheckInterval = null;
+    // Unsubscribe from edit mode changes
+    if (this._editModeUnsubscribe) {
+      this._editModeUnsubscribe();
+      this._editModeUnsubscribe = null;
     }
     
-    // When card is removed from DOM, schedule cleanup to remove orphaned hash
+    // Unregister from active registry
+    if (this._config.hash) {
+      ActiveCardRegistry.unregisterParent(this._config.hash, this);
+    }
+    
+    // Schedule cleanup
     if (this._hass && this._config.hash) {
       setTimeout(() => {
         this._cleanupOrphanedHashes();
@@ -299,13 +413,15 @@ class ReusableCardParent extends HTMLElement {
       });
       this._savedConfigHash = configHash;
       await this._cleanupOrphanedHashes();
-    } catch (e) { console.error('[ReusableCards] Save error:', e); }
+    } catch (e) { 
+      console.error('[ReusableCards] Save error:', e); 
+    }
   }
 
   async _cleanupOrphanedHashes() {
     if (!this._hass) return setTimeout(() => this._cleanupOrphanedHashes(), 500);
     
-    // Don't cleanup if dashboard is in YAML edit mode - cards are temporarily removed from DOM
+    // Don't cleanup if dashboard is in YAML edit mode
     const ha = document.querySelector('home-assistant');
     const lovelacePanel = ha?.shadowRoot?.querySelector('home-assistant-main')?.shadowRoot?.querySelector('ha-panel-lovelace');
     const editDialog = lovelacePanel?.shadowRoot?.querySelector('hui-dialog-edit-view');
@@ -323,24 +439,24 @@ class ReusableCardParent extends HTMLElement {
     const hashesForView = storedHashes.filter(h => h.endsWith(viewSuffix));
     if (!hashesForView.length) return;
     
-    const activeHashes = new Set();
-    searchShadowDOM(document, 'reusable-card-parent', el => {
-      if (el._config?.hash) activeHashes.add(el._config.hash);
-    });
-    
+    // Use registry instead of shadow DOM search
+    const activeHashes = new Set(ActiveCardRegistry.getActiveHashes().filter(h => h.endsWith(viewSuffix)));
     const orphanedHashes = hashesForView.filter(h => !activeHashes.has(h));
     
-    // Safety check: If we're about to delete ALL hashes for this view, something is probably wrong
-    // This prevents accidental deletion when cards are temporarily removed (YAML mode, etc.)
+    // Safety check: Don't delete all hashes
     if (orphanedHashes.length > 0 && orphanedHashes.length === hashesForView.length && hashesForView.length > 1) {
-      console.warn('[ReusableCards] Refusing to delete ALL hashes - this might be YAML edit mode or a bug');
+      console.warn('[ReusableCards] Refusing to delete ALL hashes - safety check');
       return;
     }
     
     if (orphanedHashes.length > 0) {
       console.log('[ReusableCards] Found orphaned hashes:', orphanedHashes);
       for (const hash of orphanedHashes) {
-        try { await this._hass.callService('reusable_cards', 'delete_card', { hash }); } catch {}
+        try { 
+          await this._hass.callService('reusable_cards', 'delete_card', { hash }); 
+        } catch (e) {
+          console.error('[ReusableCards] Error deleting hash:', hash, e);
+        }
       }
     }
   }
@@ -348,7 +464,7 @@ class ReusableCardParent extends HTMLElement {
   async createCard() {
     if (!this._config.card) return;
     try {
-      const editMode = isEditMode();
+      const editMode = EditModeTracker.isEditMode();
       this._cardElement = await createCardElement(this._config.card, editMode);
       if (this._hass) {
         this._cardElement.hass = this._hass;
@@ -358,10 +474,12 @@ class ReusableCardParent extends HTMLElement {
       this.shadowRoot.innerHTML = `
         <style>${CARD_WRAPPER_STYLE}${WATERMARK_STYLE}</style>
         <div class="card-wrapper"></div>
-        ${showWatermark ? `<span class="hash-overlay" data-hash="${this._config.hash}" title="${this._config.hash}">p</span>` : ''}
+        ${showWatermark ? `<span class="hash-overlay" data-hash="${this._config.hash}" title="Parent card: ${this._config.hash}">p</span>` : ''}
       `;
       this.shadowRoot.querySelector('.card-wrapper').appendChild(this._cardElement);
-    } catch (e) { this.showError(e.message); }
+    } catch (e) { 
+      this.showError(e.message); 
+    }
   }
 
   showError(msg) {
@@ -395,12 +513,10 @@ class ReusableCardParentEditor extends HTMLElement {
     if (this._initialHash === null && config.hash) this._initialHash = config.hash;
     this._config = { ...config };
     
-    // If it's a brand new card, default it to a stack to force the editor to load
     if (!this._config.card) {
       this._config.card = { type: "vertical-stack", cards: [] };
     }
     
-    // If no hash exists, generate default with view name
     if (!this._config.hash) {
       const currentView = getViewName(this.lovelace);
       this._config.hash = `#my-card.${currentView}`;
@@ -531,7 +647,6 @@ class ReusableCardParentEditor extends HTMLElement {
     const container = this.shadowRoot.getElementById('editor-container');
     if (!container || !this._hass) return;
     
-    // Show loading while we verify element registration
     container.innerHTML = '<div style="display:flex; justify-content:center; padding:20px;"><ha-circular-progress active size="small"></ha-circular-progress></div>';
 
     if (this._config.card?.type && this._config.card.type !== "") {
@@ -572,16 +687,13 @@ class ReusableCardParentEditor extends HTMLElement {
   async _loadElement(tag) {
     if (customElements.get(tag)) return;
     
-    // Try to trigger HA's internal lazy-loader for dashboard elements
     try {
       const helpers = await getCardHelpers();
       if (helpers) {
-        // Creating a generic element often triggers the registry to populate
         helpers.createCardElement({ type: 'button', entity: '' });
       }
     } catch (e) {}
     
-    // Poll for registration with a longer timeout (5s)
     const end = Date.now() + 5000;
     while (!customElements.get(tag) && Date.now() < end) {
       await new Promise(r => setTimeout(r, 100));
@@ -602,7 +714,7 @@ class ReusableCardChild extends HTMLElement {
     this._cardElement = null;
     this._lastCardConfig = null;
     this._lastEditMode = null;
-    this._editModeCheckInterval = null;
+    this._editModeUnsubscribe = null;
   }
 
   setConfig(config) {
@@ -615,18 +727,11 @@ class ReusableCardChild extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     
-    // Check if edit mode changed
-    const currentEditMode = isEditMode();
-    const editModeChanged = this._lastEditMode !== currentEditMode;
-    if (editModeChanged) {
-      this._lastEditMode = currentEditMode;
-    }
-    
     const cards = hass.states['sensor.reusable_cards']?.attributes?.cards || {};
     const configJson = JSON.stringify(cards[this._config.hash]);
     
-    // Recreate card if config changed OR edit mode changed
-    if (configJson !== this._lastCardConfig || editModeChanged) {
+    // Recreate if config changed
+    if (configJson !== this._lastCardConfig) {
       this.createCard();
     } else if (this._cardElement) {
       this._cardElement.hass = hass;
@@ -634,22 +739,19 @@ class ReusableCardChild extends HTMLElement {
   }
 
   connectedCallback() {
-    // Poll for edit mode changes
-    this._editModeCheckInterval = setInterval(() => {
-      if (this._hass) {
-        const currentEditMode = isEditMode();
-        if (this._lastEditMode !== currentEditMode) {
-          this._lastEditMode = currentEditMode;
-          this.createCard();
-        }
+    // Subscribe to edit mode changes (event-driven)
+    this._editModeUnsubscribe = EditModeTracker.subscribe((isEdit) => {
+      if (this._lastEditMode !== isEdit) {
+        this._lastEditMode = isEdit;
+        this.createCard();
       }
-    }, 500);
+    });
   }
 
   disconnectedCallback() {
-    if (this._editModeCheckInterval) {
-      clearInterval(this._editModeCheckInterval);
-      this._editModeCheckInterval = null;
+    if (this._editModeUnsubscribe) {
+      this._editModeUnsubscribe();
+      this._editModeUnsubscribe = null;
     }
   }
 
@@ -668,9 +770,9 @@ class ReusableCardChild extends HTMLElement {
     }
 
     const configJson = JSON.stringify(cardConfig);
-    const editMode = isEditMode();
+    const editMode = EditModeTracker.isEditMode();
     
-    // Only skip recreation if config AND edit mode are both unchanged
+    // Only skip if both config and edit mode unchanged
     if (configJson === this._lastCardConfig && this._lastEditMode === editMode && this._cardElement) {
       return;
     }
@@ -685,10 +787,12 @@ class ReusableCardChild extends HTMLElement {
       this.shadowRoot.innerHTML = `
         <style>${CARD_WRAPPER_STYLE}${WATERMARK_STYLE}</style>
         <div class="card-wrapper"></div>
-        ${showWatermark ? `<span class="hash-overlay" data-hash="${this._config.hash}" title="${this._config.hash}">c</span>` : ''}
+        ${showWatermark ? `<span class="hash-overlay" data-hash="${this._config.hash}" title="Child card: ${this._config.hash}">c</span>` : ''}
       `;
       this.shadowRoot.querySelector('.card-wrapper').appendChild(this._cardElement);
-    } catch (e) { this.showError(e.message); }
+    } catch (e) { 
+      this.showError(e.message); 
+    }
   }
 
   showError(msg) {

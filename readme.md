@@ -2,15 +2,19 @@
 
 Define a card once, use it everywhere. Create reusable card templates that can be referenced across multiple dashboards and views.
 
+
+
 ## Features
 
-- 🎨 **Visual Editor**: Full card editor with drag-and-drop support
-- 🔄 **Reusable Templates**: Define once, use anywhere
-- 📁 **YAML Storage**: Templates stored in `/config/reusable-cards-templates/reusable_cards.yaml`
-- 👁️ **Smart Visibility**: Automatically handles visibility conditions in edit mode
-- 🏷️ **View-Scoped**: Templates tagged with the dashboard view they're located in (so you can find them)
-- 💾 **Auto-Backup**: Automatic `.bak` file creation on each save
-- 🚫 **No Size Limits**: Store hundreds of templates without sensor attribute limits
+- **Visual Editor**: Fullly GUI-based card editor
+- **No Separate Template-Only Card**: No need to define an invisible parent card; use and edit the parent card like a normal card.
+- **Reusable Templates**: Define once, use anywhere.
+- **Auto-Update**: Edit a parent card, refresh page, all child cards will update.
+- **YAML Storage**: Templates stored in `/config/reusable-cards-templates/reusable_cards.yaml`
+- **Smart Visibility**: Automatically handles visibility conditions in edit mode
+- **View-Scoped**: Templates tagged with the dashboard view they're located in (so you can find them)
+- **Auto-Backup**: Automatic `.bak` file creation on each save
+- **No Size Limits**: Store hundreds of templates without sensor attribute limits
 
 ## Installation
 
@@ -38,13 +42,13 @@ Define a card once, use it everywhere. Create reusable card templates that can b
 **Via UI:**
 - Go to **Settings** → **Dashboards** → **⋮** (top right) → **Resources**
 - Click **+ Add Resource**
-- URL: `/local/reusable-cards/reusable-cards.js`
+- URL: `/hacsfiles/reusable-cards/reusable-cards.js`
 - Type: **JavaScript Module**
 
 **Via YAML:**
 ```yaml
 resources:
-  - url: /local/reusable-cards/reusable-cards.js
+  - url: /hacsfiles/reusable-cards/reusable-cards.js
     type: module
 ```
 
@@ -222,12 +226,6 @@ data:
 - Use descriptive names: `#camera-grid.frontdoor` instead of `#card1`
 - Keep view names consistent with your dashboard paths
 - Use lowercase with hyphens for readability
-
-### Organizing Templates
-
-- Create parent cards in a dedicated "Templates" dashboard view
-- Use child cards throughout your other views
-- Keep templates view-specific when possible for easier management
 
 ### Editing Templates
 
