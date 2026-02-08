@@ -727,13 +727,17 @@ class ReusableCardChild extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     
-    const cards = hass.states['sensor.reusable_cards']?.attributes?.cards || {};
+    // Read cards directly from hass.data (primary) or sensor attributes (fallback)
+    const cards = hass.data?.reusable_cards?.cards || 
+                  hass.states['sensor.reusable_cards']?.attributes?.cards || {};
     const configJson = JSON.stringify(cards[this._config.hash]);
     
-    // Recreate if config changed
+    // Recreate if THIS template's config changed
+    // This is efficient - only checks one template, not all of them
     if (configJson !== this._lastCardConfig) {
       this.createCard();
     } else if (this._cardElement) {
+      // Just update hass if template unchanged
       this._cardElement.hass = hass;
     }
   }
@@ -758,12 +762,15 @@ class ReusableCardChild extends HTMLElement {
   async createCard() {
     if (!this._hass || !this._config.hash) return;
     
-    const sensor = this._hass.states['sensor.reusable_cards'];
-    if (!sensor?.attributes?.cards) {
+    // Try hass.data first (faster), fallback to sensor attributes
+    const cards = this._hass.data?.reusable_cards?.cards || 
+                  this._hass.states['sensor.reusable_cards']?.attributes?.cards;
+    
+    if (!cards) {
       return this.showError('Reusable Cards integration not found.');
     }
     
-    const cardConfig = sensor.attributes.cards[this._config.hash];
+    const cardConfig = cards[this._config.hash];
     if (!cardConfig) {
       this._lastCardConfig = null;
       return this.showError(`Template "${this._config.hash}" not found.`);
@@ -820,7 +827,11 @@ class ReusableCardChildEditor extends HTMLElement {
   setConfig(config) { this._config = config; this._render(); }
 
   set hass(hass) {
-    const newHashes = Object.keys(hass?.states['sensor.reusable_cards']?.attributes?.cards || {}).join(',');
+    // Use hass.data for template list (faster, no sensor dependency)
+    const cards = hass?.data?.reusable_cards?.cards || 
+                  hass?.states['sensor.reusable_cards']?.attributes?.cards || {};
+    const newHashes = Object.keys(cards).join(',');
+    
     if (this._lastHashes !== newHashes || !this.shadowRoot?.hasChildNodes()) {
       this._hass = hass;
       this._lastHashes = newHashes;
@@ -838,7 +849,9 @@ class ReusableCardChildEditor extends HTMLElement {
   _render() {
     if (!this._hass) return;
     
-    const cards = this._hass.states['sensor.reusable_cards']?.attributes?.cards || {};
+    // Use hass.data for template list
+    const cards = this._hass.data?.reusable_cards?.cards || 
+                  this._hass.states['sensor.reusable_cards']?.attributes?.cards || {};
     const hashes = Object.keys(cards);
     const currentHash = this._config.hash || '';
     

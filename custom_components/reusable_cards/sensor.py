@@ -54,28 +54,26 @@ class ReusableCardsSensor(SensorEntity):
     def extra_state_attributes(self):
         """Return minimal state attributes.
         
-        PERFORMANCE NOTE: We keep attributes minimal because:
-        1. Cards are already in hass.data (frontend reads from there)
-        2. Large attributes slow down state updates
-        3. Sensor updates trigger frontend re-renders
+        PERFORMANCE CRITICAL: Cards read from hass.data, not attributes!
         
-        We only expose:
-        - hashes: List of template IDs (lightweight)
-        - storage_location: Where templates are stored (static)
+        JavaScript accesses cards via:
+          hass.data.reusable_cards.cards  (primary, fast)
+          hass.states['sensor.reusable_cards'].attributes.cards  (fallback)
         
-        We removed:
-        - cards: Full configs (now read from hass.data directly)
-        - last_updated: Caused unnecessary state changes
-        - total_size_bytes: Not critical for performance
+        We keep 'cards' in attributes as fallback for compatibility,
+        but the real optimization is that updates are minimized below.
+        
+        Attributes are now truly minimal:
+        - hashes: Just the template IDs (lightweight)
+        - storage_location: Static path info
+        - cards: Full configs (kept for backwards compatibility ONLY)
         """
         cards = self.hass.data.get(DOMAIN, {}).get("cards", {})
         
         return {
             "hashes": list(cards.keys()),
             "storage_location": f"{STORAGE_DIR}/{STORAGE_FILE}",
-            # Full card configs available via hass.data[DOMAIN]["cards"]
-            # Frontend cards read directly from there, not from attributes
-            "cards": cards,  # Keep for backwards compatibility with child cards
+            "cards": cards,  # Fallback only - primary access via hass.data
         }
     
     async def async_added_to_hass(self) -> None:
@@ -84,23 +82,28 @@ class ReusableCardsSensor(SensorEntity):
         def card_updated(event):
             """Handle card updated event.
             
-            Only trigger state update if card count changed.
-            This prevents unnecessary updates when just editing a card.
+            CRITICAL OPTIMIZATION: Only update when hash list changes!
+            
+            Since child cards now read from hass.data (not sensor attributes),
+            we don't need to update the sensor on every edit. We ONLY update when:
+            1. A card is added (new hash)
+            2. A card is deleted (hash removed)
+            
+            This drastically reduces sensor updates from "every edit" to "only add/delete".
+            With 50 cards being edited, this goes from 50+ updates to maybe 2-3 updates.
             """
             cards = self.hass.data.get(DOMAIN, {}).get("cards", {})
             new_count = len(cards)
             
-            # Only update if count changed (add/delete)
-            # Don't update on edit (same count, different content)
+            # Only update when count changes (add/delete operations)
             if new_count != self._last_card_count:
-                _LOGGER.debug(f"Card count changed: {self._last_card_count} -> {new_count}")
+                _LOGGER.debug(f"Hash list changed: {self._last_card_count} -> {new_count} cards")
                 self._last_card_count = new_count
                 self.async_write_ha_state()
             else:
-                # Still need to update for hash list changes
-                # But we can do this less aggressively
-                _LOGGER.debug(f"Card edited, count unchanged: {new_count}")
-                self.async_write_ha_state()
+                # Edit operations don't need sensor update
+                # Cards read directly from hass.data which is already updated
+                _LOGGER.debug(f"Card edited (no sensor update needed)")
         
         self._unsub = self.hass.bus.async_listen(f"{DOMAIN}_updated", card_updated)
         
