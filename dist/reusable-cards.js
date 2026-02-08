@@ -235,30 +235,33 @@ const ActiveCardRegistry = {
 
 // Strip visibility conditions from config recursively
 const stripVisibility = (config) => {
+  // Handle primitives
   if (!config || typeof config !== 'object') return config;
-  if (Array.isArray(config)) return config.map(item => stripVisibility(item));
   
+  // Handle arrays
+  if (Array.isArray(config)) {
+    return config.map(item => stripVisibility(item));
+  }
+  
+  // Handle objects - create shallow copy
   const cleaned = { ...config };
+  
+  // Remove visibility properties at this level
   delete cleaned.visibility;
   delete cleaned.conditions;
   
-  const arrayProperties = [
-    'cards', 'badges', 'elements', 'tabs', 'entities', 
-    'rows', 'columns', 'items', 'sections', 'views'
-  ];
-  
-  for (const prop of arrayProperties) {
-    if (cleaned[prop] && Array.isArray(cleaned[prop])) {
-      cleaned[prop] = cleaned[prop].map(item => stripVisibility(item));
-    }
-  }
-  
+  // Recursively process ALL properties (not just known array properties)
+  // This ensures we catch any nested structures
   for (const key in cleaned) {
-    if (cleaned[key] && typeof cleaned[key] === 'object' && !Array.isArray(cleaned[key])) {
-      const skipKeys = ['hass', 'config', 'lovelace', 'stateObj'];
-      if (!skipKeys.includes(key)) {
-        cleaned[key] = stripVisibility(cleaned[key]);
-      }
+    const value = cleaned[key];
+    
+    // Skip special Home Assistant internal objects
+    const skipKeys = ['hass', 'config', 'lovelace', 'stateObj'];
+    if (skipKeys.includes(key)) continue;
+    
+    // Recursively process objects and arrays
+    if (value && typeof value === 'object') {
+      cleaned[key] = stripVisibility(value);
     }
   }
   
@@ -267,6 +270,11 @@ const stripVisibility = (config) => {
 
 const createCardElement = async (config, forceEditMode = false) => {
   const helpers = await getCardHelpers();
+  
+  if (forceEditMode) {
+    console.log('[ReusableCards] Edit mode active - stripping visibility conditions');
+  }
+  
   const cleanedConfig = forceEditMode ? stripVisibility(config) : config;
   
   let card;
