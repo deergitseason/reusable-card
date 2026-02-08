@@ -28,3 +28,22 @@ delete_card:
       example: "#camera"
       selector:
         text:
+
+cleanup_orphaned:
+  name: Cleanup Orphaned Templates
+  description: Find and optionally delete template hashes that don't have parent cards in your Lovelace config. Automatically scans across all dashboard views.
+  fields:
+    view:
+      name: View Name
+      description: Only check templates for a specific view (optional, defaults to all views)
+      required: false
+      example: "dashboard"
+      selector:
+        text:
+    dry_run:
+      name: Dry Run
+      description: If true, only logs what would be deleted without actually deleting (recommended to run first)
+      required: false
+      default: true
+      selector:
+        boolean:

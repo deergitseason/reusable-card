@@ -1,5 +1,5 @@
 // Reusable Cards for Home Assistant - Performance Optimized
-const CARD_VERSION = '1.4.2';
+const CARD_VERSION = '1.4.3';
 
 // Shared styles
 const WATERMARK_STYLE = `
@@ -288,8 +288,6 @@ const createCardElement = async (config, forceEditMode = false) => {
 // ============================================================================
 
 class ReusableCardParent extends HTMLElement {
-  static _cleanupScheduled = false;
-  
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
@@ -345,14 +343,9 @@ class ReusableCardParent extends HTMLElement {
       requestAnimationFrame(() => this._trySave());
     }
     
-    // Schedule cleanup (debounced)
-    if (!ReusableCardParent._cleanupScheduled) {
-      ReusableCardParent._cleanupScheduled = true;
-      setTimeout(() => {
-        this._cleanupOrphanedHashes();
-        ReusableCardParent._cleanupScheduled = false;
-      }, 2000);
-    }
+    // CLEANUP DISABLED: Visibility conditions can hide cards, making them
+    // appear orphaned when they're not. Users should manually delete templates
+    // they no longer need using the delete_card service.
   }
 
   disconnectedCallback() {
@@ -367,12 +360,8 @@ class ReusableCardParent extends HTMLElement {
       ActiveCardRegistry.unregisterParent(this._config.hash, this);
     }
     
-    // Schedule cleanup
-    if (this._hass && this._config.hash) {
-      setTimeout(() => {
-        this._cleanupOrphanedHashes();
-      }, 1000);
-    }
+    // CLEANUP DISABLED: Don't auto-delete on disconnect because visibility
+    // conditions can temporarily remove cards from DOM
   }
 
   _trySave() {
@@ -412,52 +401,8 @@ class ReusableCardParent extends HTMLElement {
         config: this._config.card
       });
       this._savedConfigHash = configHash;
-      await this._cleanupOrphanedHashes();
     } catch (e) { 
       console.error('[ReusableCards] Save error:', e); 
-    }
-  }
-
-  async _cleanupOrphanedHashes() {
-    if (!this._hass) return setTimeout(() => this._cleanupOrphanedHashes(), 500);
-    
-    // Don't cleanup if dashboard is in YAML edit mode
-    const ha = document.querySelector('home-assistant');
-    const lovelacePanel = ha?.shadowRoot?.querySelector('home-assistant-main')?.shadowRoot?.querySelector('ha-panel-lovelace');
-    const editDialog = lovelacePanel?.shadowRoot?.querySelector('hui-dialog-edit-view');
-    if (editDialog?.shadowRoot?.querySelector('ha-dialog[open]')) {
-      console.log('[ReusableCards] Skipping cleanup - YAML edit mode active');
-      return;
-    }
-    
-    const currentView = getViewFromURL();
-    if (!currentView) return;
-    
-    const sensor = this._hass.states['sensor.reusable_cards'];
-    const storedHashes = sensor?.attributes?.hashes || [];
-    const viewSuffix = `.${currentView}`;
-    const hashesForView = storedHashes.filter(h => h.endsWith(viewSuffix));
-    if (!hashesForView.length) return;
-    
-    // Use registry instead of shadow DOM search
-    const activeHashes = new Set(ActiveCardRegistry.getActiveHashes().filter(h => h.endsWith(viewSuffix)));
-    const orphanedHashes = hashesForView.filter(h => !activeHashes.has(h));
-    
-    // Safety check: Don't delete all hashes
-    if (orphanedHashes.length > 0 && orphanedHashes.length === hashesForView.length && hashesForView.length > 1) {
-      console.warn('[ReusableCards] Refusing to delete ALL hashes - safety check');
-      return;
-    }
-    
-    if (orphanedHashes.length > 0) {
-      console.log('[ReusableCards] Found orphaned hashes:', orphanedHashes);
-      for (const hash of orphanedHashes) {
-        try { 
-          await this._hass.callService('reusable_cards', 'delete_card', { hash }); 
-        } catch (e) {
-          console.error('[ReusableCards] Error deleting hash:', hash, e);
-        }
-      }
     }
   }
 

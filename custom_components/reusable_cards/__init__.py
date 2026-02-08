@@ -23,6 +23,11 @@ DELETE_CARD_SCHEMA = vol.Schema({
     vol.Required("hash"): cv.string,
 })
 
+CLEANUP_ORPHANED_SCHEMA = vol.Schema({
+    vol.Optional("view"): cv.string,
+    vol.Optional("dry_run", default=True): cv.boolean,
+})
+
 
 def _get_storage_dir(hass: HomeAssistant) -> str:
     """Get the path to the storage directory."""
@@ -83,6 +88,45 @@ def _save_cards(hass: HomeAssistant, cards: dict) -> bool:
     except Exception as e:
         _LOGGER.error(f"Error saving YAML file: {e}")
         return False
+
+
+def _get_lovelace_config(hass: HomeAssistant) -> dict:
+    """Get the current Lovelace configuration."""
+    try:
+        # Try to get lovelace config from storage
+        lovelace_storage_path = hass.config.path(".storage/lovelace")
+        if os.path.exists(lovelace_storage_path):
+            with open(lovelace_storage_path, 'r') as f:
+                data = yaml.safe_load(f)
+                return data.get('data', {})
+        
+        # Fallback to UI lovelace mode
+        # Note: This only works if lovelace is in storage mode
+        _LOGGER.warning("Could not access Lovelace config - cleanup may be incomplete")
+        return {}
+    except Exception as e:
+        _LOGGER.error(f"Error loading Lovelace config: {e}")
+        return {}
+
+
+def _find_card_hashes_in_config(config: dict) -> set:
+    """Recursively find all reusable-card-parent hashes in a Lovelace config."""
+    hashes = set()
+    
+    if not isinstance(config, dict):
+        return hashes
+    
+    # Check if this is a reusable-card-parent
+    if config.get('type') == 'custom:reusable-card-parent' and config.get('hash'):
+        hashes.add(config['hash'])
+    
+    # Recursively search in common card container properties
+    for key in ['cards', 'badges', 'elements', 'entities', 'views', 'sections']:
+        if key in config and isinstance(config[key], list):
+            for item in config[key]:
+                hashes.update(_find_card_hashes_in_config(item))
+    
+    return hashes
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -152,6 +196,69 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         else:
             _LOGGER.warning(f"Card template not found: {card_hash}")
     
+    async def handle_cleanup_orphaned(call: ServiceCall) -> None:
+        """Handle cleanup_orphaned service call.
+        
+        Finds template hashes that don't have corresponding parent cards in the
+        Lovelace configuration and optionally deletes them.
+        """
+        specific_view = call.data.get("view")
+        dry_run = call.data.get("dry_run", True)
+        
+        _LOGGER.info(f"Running cleanup_orphaned (dry_run={dry_run}, view={specific_view or 'all'})")
+        
+        # Get current stored templates
+        stored_hashes = set(hass.data[DOMAIN]["cards"].keys())
+        
+        if not stored_hashes:
+            _LOGGER.info("No templates found in storage")
+            return
+        
+        # Get Lovelace config and find all parent card hashes
+        lovelace_config = await hass.async_add_executor_job(_get_lovelace_config, hass)
+        active_hashes = _find_card_hashes_in_config(lovelace_config)
+        
+        # Filter by view if specified
+        if specific_view:
+            view_suffix = f".{specific_view}"
+            stored_hashes = {h for h in stored_hashes if h.endswith(view_suffix)}
+            active_hashes = {h for h in active_hashes if h.endswith(view_suffix)}
+            _LOGGER.debug(f"Filtered to view '{specific_view}': {len(stored_hashes)} stored, {len(active_hashes)} active")
+        
+        # Find orphaned hashes
+        orphaned_hashes = stored_hashes - active_hashes
+        
+        if not orphaned_hashes:
+            _LOGGER.info("No orphaned templates found")
+            return
+        
+        _LOGGER.info(f"Found {len(orphaned_hashes)} orphaned template(s): {sorted(orphaned_hashes)}")
+        
+        if dry_run:
+            _LOGGER.info("DRY RUN - Would delete the following templates:")
+            for hash_val in sorted(orphaned_hashes):
+                _LOGGER.info(f"  - {hash_val}")
+        else:
+            # Actually delete orphaned templates
+            deleted_count = 0
+            for hash_val in orphaned_hashes:
+                if hash_val in hass.data[DOMAIN]["cards"]:
+                    del hass.data[DOMAIN]["cards"][hash_val]
+                    deleted_count += 1
+            
+            # Save to YAML file
+            if deleted_count > 0:
+                success = await hass.async_add_executor_job(
+                    _save_cards, hass, hass.data[DOMAIN]["cards"]
+                )
+                
+                if success:
+                    # Fire event to notify cards
+                    hass.bus.async_fire(f"{DOMAIN}_updated", {"cleanup": True})
+                    _LOGGER.info(f"Deleted {deleted_count} orphaned template(s)")
+                else:
+                    _LOGGER.error("Failed to save after cleanup")
+    
     # Register services with schemas
     hass.services.async_register(
         DOMAIN, 
@@ -164,6 +271,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         "delete_card", 
         handle_delete_card,
         schema=DELETE_CARD_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "cleanup_orphaned",
+        handle_cleanup_orphaned,
+        schema=CLEANUP_ORPHANED_SCHEMA
     )
     
     # Create sensor platform
